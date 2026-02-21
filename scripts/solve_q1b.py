@@ -9,7 +9,8 @@ from typing import Dict
 
 import math
 import numpy as np
-from scipy.optimize import linprog
+import scipy.sparse as sp
+from scipy.optimize import linprog, milp, LinearConstraint, Bounds
 
 from solver_utils import (
     QUARTERS,
@@ -30,6 +31,7 @@ from solve_q1a import build_flow_and_tools as build_q1a
 
 MINS_PER_WEEK = 7 * 24 * 60
 MOVEOUT_COST = 1_000_000
+USE_TOOL_MILP = True
 
 
 def total_req_t_ws(q_idx: int) -> Dict[str, float]:
@@ -175,6 +177,252 @@ def solve_quarter(q_idx: int, remaining_space: Dict[int, float]) -> Dict[str, Di
         if not exceeded:
             return tor_req
     return tor_req
+
+
+def _tor_req_curve(step_reqs, max_m: int):
+    curve = []
+    for m in range(max_m + 1):
+        cumulative = 0.0
+        total_tor = 0.0
+        for _, req_m, req_t in step_reqs:
+            cumulative += req_m
+            overflow = max(0.0, cumulative - m)
+            if overflow <= 0:
+                req_on_tor = 0.0
+            elif overflow >= req_m:
+                req_on_tor = req_t
+            else:
+                req_on_tor = req_t * (overflow / req_m) if req_m > 0 else 0.0
+            total_tor += req_on_tor
+        curve.append(total_tor)
+    return curve
+
+
+def optimize_tools_milp(flow, mintech_tools):
+    """
+    Given fixed flow, optimize mintech + TOR tool counts across quarters to
+    minimize capex + moveout cost under space constraints.
+    """
+    fabs = [1, 2, 3]
+    ws_list = MINTECH_WS
+
+    # build step requirements per quarter/fab/ws
+    step_reqs = {q: {fab: {ws: [] for ws in ws_list} for fab in fabs} for q in range(8)}
+    for q_idx in range(8):
+        for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
+            for fab in fabs:
+                load = flow[q_idx][node][step][fab]
+                if load <= 0:
+                    continue
+                req_m = load * rpt_m / (MINS_PER_WEEK * WS_SPECS[ws_m]["util"])
+                req_t = load * rpt_t / (MINS_PER_WEEK * WS_SPECS[ws_t]["util"])
+                step_reqs[q_idx][fab][ws_m].append((rank, req_m, req_t))
+        for fab in fabs:
+            for ws in ws_list:
+                step_reqs[q_idx][fab][ws].sort(key=lambda r: r[0])
+
+    # initial counts and Q1'26 tor baseline (fixed)
+    t0 = {fab: {ws: 0 for ws in ws_list} for fab in fabs}
+    for fab in fabs:
+        for ws in ws_list:
+            max_m = mintech_tools[fab][ws]
+            curve = _tor_req_curve(step_reqs[0][fab][ws], max_m)
+            t0[fab][ws] = int(math.ceil(curve[max_m]))
+
+    # variable indexing
+    idx_y = {}
+    idx_t = {}
+    idx_inc_m = {}
+    idx_dec_m = {}
+    idx_inc_t = {}
+    idx_dec_t = {}
+
+    var_idx = 0
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                max_m = mintech_tools[fab][ws]
+                for i in range(1, max_m + 1):
+                    idx_y[(q_idx, fab, ws, i)] = var_idx
+                    var_idx += 1
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                idx_t[(q_idx, fab, ws)] = var_idx
+                var_idx += 1
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                idx_inc_m[(q_idx, fab, ws)] = var_idx
+                var_idx += 1
+                idx_dec_m[(q_idx, fab, ws)] = var_idx
+                var_idx += 1
+                idx_inc_t[(q_idx, fab, ws)] = var_idx
+                var_idx += 1
+                idx_dec_t[(q_idx, fab, ws)] = var_idx
+                var_idx += 1
+
+    n_vars = var_idx
+    bounds_lo = np.zeros(n_vars)
+    bounds_hi = np.full(n_vars, np.inf)
+    integrality = np.zeros(n_vars, dtype=int)
+
+    for (q_idx, fab, ws, i), idx in idx_y.items():
+        bounds_hi[idx] = 1.0
+        integrality[idx] = 1
+    for idx in idx_t.values():
+        integrality[idx] = 1
+
+    bounds = Bounds(bounds_lo, bounds_hi)
+
+    constraints = []
+
+    def add_constraint(coeffs, lb, ub):
+        cols = [c for c, _ in coeffs]
+        data = [v for _, v in coeffs]
+        row = sp.csr_matrix((data, ([0] * len(cols), cols)), shape=(1, n_vars))
+        constraints.append(LinearConstraint(row, lb, ub))
+
+    # prefix constraints for mintech y variables
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                max_m = mintech_tools[fab][ws]
+                for i in range(1, max_m):
+                    add_constraint(
+                        [
+                            (idx_y[(q_idx, fab, ws, i)], 1.0),
+                            (idx_y[(q_idx, fab, ws, i + 1)], -1.0),
+                        ],
+                        0.0,
+                        np.inf,
+                    )
+
+    # capacity constraints and space constraints
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                max_m = mintech_tools[fab][ws]
+                curve = _tor_req_curve(step_reqs[q_idx][fab][ws], max_m)
+                base_tor = curve[0]
+                deltas = [curve[i - 1] - curve[i] for i in range(1, max_m + 1)]
+                coeffs = [(idx_t[(q_idx, fab, ws)], 1.0)]
+                for i, delta in enumerate(deltas, start=1):
+                    coeffs.append((idx_y[(q_idx, fab, ws, i)], -delta))
+                add_constraint(coeffs, base_tor, np.inf)
+
+        for fab in fabs:
+            coeffs = []
+            for ws in ws_list:
+                max_m = mintech_tools[fab][ws]
+                for i in range(1, max_m + 1):
+                    coeffs.append((idx_y[(q_idx, fab, ws, i)], WS_SPECS[ws]["space"]))
+                coeffs.append((idx_t[(q_idx, fab, ws)], WS_SPECS[WS_PAIRS[ws]]["space"]))
+            add_constraint(coeffs, -np.inf, FAB_SPACE[fab])
+
+    # inc/dec constraints for mintech and tor
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                max_m = mintech_tools[fab][ws]
+                # mintech count expressions
+                coeffs_curr = [(idx_y[(q_idx, fab, ws, i)], -1.0) for i in range(1, max_m + 1)]
+                coeffs_curr_pos = [(idx_y[(q_idx, fab, ws, i)], 1.0) for i in range(1, max_m + 1)]
+                if q_idx == 1:
+                    prev_count = max_m
+                    add_constraint(
+                        [(idx_inc_m[(q_idx, fab, ws)], 1.0)] + coeffs_curr,
+                        -prev_count,
+                        np.inf,
+                    )
+                    add_constraint(
+                        [(idx_dec_m[(q_idx, fab, ws)], 1.0)] + coeffs_curr_pos,
+                        prev_count,
+                        np.inf,
+                    )
+                    prev_t = t0[fab][ws]
+                    add_constraint(
+                        [(idx_inc_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], -1.0)],
+                        -prev_t,
+                        np.inf,
+                    )
+                    add_constraint(
+                        [(idx_dec_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], 1.0)],
+                        prev_t,
+                        np.inf,
+                    )
+                else:
+                    # prev mintech from q-1
+                    coeffs_prev = [(idx_y[(q_idx - 1, fab, ws, i)], 1.0) for i in range(1, max_m + 1)]
+                    add_constraint(
+                        [(idx_inc_m[(q_idx, fab, ws)], 1.0)] + coeffs_curr + coeffs_prev,
+                        0.0,
+                        np.inf,
+                    )
+                    add_constraint(
+                        [(idx_dec_m[(q_idx, fab, ws)], 1.0)] + coeffs_curr_pos + [(idx_y[(q_idx - 1, fab, ws, i)], -1.0) for i in range(1, max_m + 1)],
+                        0.0,
+                        np.inf,
+                    )
+                    # tor inc/dec
+                    add_constraint(
+                        [(idx_inc_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], -1.0), (idx_t[(q_idx - 1, fab, ws)], 1.0)],
+                        0.0,
+                        np.inf,
+                    )
+                    add_constraint(
+                        [(idx_dec_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx - 1, fab, ws)], -1.0)],
+                        0.0,
+                        np.inf,
+                    )
+
+    # objective
+    c = np.zeros(n_vars)
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                c[idx_inc_m[(q_idx, fab, ws)]] = WS_SPECS[ws]["capex"]
+                c[idx_inc_t[(q_idx, fab, ws)]] = WS_SPECS[WS_PAIRS[ws]]["capex"]
+                c[idx_dec_m[(q_idx, fab, ws)]] = MOVEOUT_COST
+                c[idx_dec_t[(q_idx, fab, ws)]] = MOVEOUT_COST
+
+    res = milp(c, constraints=constraints, bounds=bounds, integrality=integrality)
+    if not res.success:
+        return None
+
+    x = res.x
+
+    # build tool plan
+    tool_plan = {q: {1: {}, 2: {}, 3: {}} for q in range(8)}
+    for fab in fabs:
+        for ws in ws_list:
+            tool_plan[0][fab][ws] = mintech_tools[fab][ws]
+            tool_plan[0][fab][WS_PAIRS[ws]] = t0[fab][ws]
+    for q_idx in range(1, 8):
+        for fab in fabs:
+            for ws in ws_list:
+                max_m = mintech_tools[fab][ws]
+                count_m = sum(x[idx_y[(q_idx, fab, ws, i)]] for i in range(1, max_m + 1))
+                tool_plan[q_idx][fab][ws] = int(round(count_m))
+                tool_plan[q_idx][fab][WS_PAIRS[ws]] = int(round(x[idx_t[(q_idx, fab, ws)]]))
+    return tool_plan
+
+
+def _moveout_and_capex(tool_plan):
+    moveout = 0.0
+    capex = 0.0
+    ws_all = MINTECH_WS + [WS_PAIRS[ws] for ws in MINTECH_WS]
+    for fab in [1, 2, 3]:
+        prev = {ws: tool_plan[0][fab][ws] for ws in ws_all}
+        for q_idx in range(1, 8):
+            curr = {ws: tool_plan[q_idx][fab][ws] for ws in ws_all}
+            for ws in ws_all:
+                if curr[ws] < prev[ws]:
+                    moveout += (prev[ws] - curr[ws]) * MOVEOUT_COST
+                elif curr[ws] > prev[ws]:
+                    capex += (curr[ws] - prev[ws]) * WS_SPECS[ws]["capex"]
+            prev = curr
+    return moveout + capex
 
 
 def build_flow_and_tools():
@@ -449,6 +697,12 @@ def build_flow_and_tools():
             for ws in MINTECH_WS:
                 ws_t = WS_PAIRS[ws]
                 tool_plan[q_idx][fab][ws_t] = int(math.ceil(tor_req[ws][fab]))
+
+    if USE_TOOL_MILP:
+        milp_plan = optimize_tools_milp(flow, mintech_tools)
+        if milp_plan is not None:
+            if _moveout_and_capex(milp_plan) < _moveout_and_capex(tool_plan):
+                tool_plan = milp_plan
 
     return flow, tool_plan
 
