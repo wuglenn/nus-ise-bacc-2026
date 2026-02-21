@@ -43,3 +43,23 @@ This is an optimistic bound because it assumes:
 
 From **Q2'27 onward**, even the optimistic lower bound exceeds total fab space (`3500 m²`), so Q1a is **infeasible**.
 
+## Max production (upper bound on feasible scaling)
+
+Let `k` scale all quarterly loadings (`k=1` is the original plan). Using the same optimistic lower-bound model, we can compute the **maximum feasible k** per quarter such that:
+
+`Fixed mintech space + LB_TOR_space(k) ≤ 3500 m²`.
+
+This gives an **upper bound** on feasible production (real solutions must be ≤ this k).
+
+| Quarter | k_max (upper bound) |
+|---|---:|
+| Q1'26 | 1.345 |
+| Q2'26 | 1.335 |
+| Q3'26 | 1.179 |
+| Q4'26 | 1.129 |
+| Q1'27 | 1.090 |
+| Q2'27 | 0.959 |
+| Q3'27 | 0.838 |
+| Q4'27 | 0.709 |
+
+Therefore, for Q2'27 and later, even the **best-case** feasible production is **below 100%**, proving infeasibility at `k=1`.
