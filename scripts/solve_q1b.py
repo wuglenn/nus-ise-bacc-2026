@@ -5,32 +5,32 @@ Generates output/03_q2a_tooling.csv and output/04_q2a_flow.csv
 
 from __future__ import annotations
 
+import math
 from typing import Dict
 
-import math
 import numpy as np
 import scipy.sparse as sp
-from scipy.optimize import linprog, milp, LinearConstraint, Bounds
-
+from scipy.optimize import Bounds, LinearConstraint, linprog, milp
+from solve_q1a import build_flow_and_tools as build_q1a
+from solve_q1b_global import build_flow_and_tools_global
 from solver_utils import (
-    QUARTERS,
-    NODE_STEPS,
+    FAB_SPACE,
     MINTECH_WS,
+    NODE_STEPS,
+    QUARTERS,
+    TARGET_LOADING,
     WS_PAIRS,
     WS_SPECS,
-    TARGET_LOADING,
-    FAB_SPACE,
-    base_mintech_tools,
     base_mintech_space,
+    base_mintech_tools,
     build_empty_flow,
     write_flow_csv,
     write_tooling_csv,
 )
-from solve_q1a import build_flow_and_tools as build_q1a
-
 
 MINS_PER_WEEK = 7 * 24 * 60
 MOVEOUT_COST = 1_000_000
+USE_GLOBAL_MILP = True
 USE_TOOL_MILP = True
 
 
@@ -46,11 +46,15 @@ def total_req_t_ws(q_idx: int) -> Dict[str, float]:
 def node_ws_tor_coeff() -> Dict[Tuple[int, str], float]:
     coeff: Dict[Tuple[int, str], float] = {}
     for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
-        coeff[(node, ws_m)] = coeff.get((node, ws_m), 0.0) + rpt_t / (MINS_PER_WEEK * WS_SPECS[ws_t]["util"])
+        coeff[(node, ws_m)] = coeff.get((node, ws_m), 0.0) + rpt_t / (
+            MINS_PER_WEEK * WS_SPECS[ws_t]["util"]
+        )
     return coeff
 
 
-def solve_node_shares(q_idx: int, space_cap: Dict[int, float] | None = None) -> Dict[int, Dict[int, float]]:
+def solve_node_shares(
+    q_idx: int, space_cap: Dict[int, float] | None = None
+) -> Dict[int, Dict[int, float]]:
     """
     Solve for per-node fab shares so that:
       - each node's shares sum to 1
@@ -96,7 +100,9 @@ def solve_node_shares(q_idx: int, space_cap: Dict[int, float] | None = None) -> 
         for ws in MINTECH_WS:
             for node in nodes:
                 load = TARGET_LOADING[node][q_idx]
-                row[idx[(node, fab)]] += load * coeff.get((node, ws), 0.0) * WS_SPECS[WS_PAIRS[ws]]["space"]
+                row[idx[(node, fab)]] += (
+                    load * coeff.get((node, ws), 0.0) * WS_SPECS[WS_PAIRS[ws]]["space"]
+                )
         row[t_idx] = -1.0
         A_ub.append(row)
         b_ub.append(0.0)
@@ -105,20 +111,34 @@ def solve_node_shares(q_idx: int, space_cap: Dict[int, float] | None = None) -> 
         for ws in MINTECH_WS:
             for node in nodes:
                 load = TARGET_LOADING[node][q_idx]
-                row2[idx[(node, fab)]] += load * coeff.get((node, ws), 0.0) * WS_SPECS[WS_PAIRS[ws]]["space"]
+                row2[idx[(node, fab)]] += (
+                    load * coeff.get((node, ws), 0.0) * WS_SPECS[WS_PAIRS[ws]]["space"]
+                )
         A_ub.append(row2)
         b_ub.append((space_cap or FAB_SPACE)[fab])
 
     bounds = [(0.0, 1.0)] * (n_vars - 1) + [(0.0, None)]
-    res = linprog(c, A_ub=np.array(A_ub), b_ub=np.array(b_ub), A_eq=np.array(A_eq), b_eq=np.array(b_eq), bounds=bounds, method="highs")
+    res = linprog(
+        c,
+        A_ub=np.array(A_ub),
+        b_ub=np.array(b_ub),
+        A_eq=np.array(A_eq),
+        b_eq=np.array(b_eq),
+        bounds=bounds,
+        method="highs",
+    )
     if not res.success:
-        raise RuntimeError(f"Node-share LP infeasible for {QUARTERS[q_idx]}: {res.message}")
+        raise RuntimeError(
+            f"Node-share LP infeasible for {QUARTERS[q_idx]}: {res.message}"
+        )
     x = res.x
     shares = {node: {fab: x[idx[(node, fab)]] for fab in fabs} for node in nodes}
     return shares
 
 
-def solve_quarter(q_idx: int, remaining_space: Dict[int, float]) -> Dict[str, Dict[int, float]]:
+def solve_quarter(
+    q_idx: int, remaining_space: Dict[int, float]
+) -> Dict[str, Dict[int, float]]:
     """
     Returns tor_req[ws][fab] in tool units (fractional).
     """
@@ -160,9 +180,19 @@ def solve_quarter(q_idx: int, remaining_space: Dict[int, float]) -> Dict[str, Di
     for _ in range(8):
         A_ub = np.array(A_ub_base)
         b_ub = np.array([space_cap[fab] for fab in fabs])
-        res = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=np.array(A_eq), b_eq=np.array(b_eq), bounds=bounds, method="highs")
+        res = linprog(
+            c,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            A_eq=np.array(A_eq),
+            b_eq=np.array(b_eq),
+            bounds=bounds,
+            method="highs",
+        )
         if not res.success:
-            raise RuntimeError(f"LP infeasible for quarter {QUARTERS[q_idx]}: {res.message}")
+            raise RuntimeError(
+                f"LP infeasible for quarter {QUARTERS[q_idx]}: {res.message}"
+            )
         x = res.x
         tor_req = {ws: {fab: x[idx[(ws, fab)]] for fab in fabs} for ws in ws_list}
         # check rounding space
@@ -172,7 +202,9 @@ def solve_quarter(q_idx: int, remaining_space: Dict[int, float]) -> Dict[str, Di
             for ws in ws_list:
                 used += math.ceil(tor_req[ws][fab]) * WS_SPECS[WS_PAIRS[ws]]["space"]
             if used > space_cap[fab] + 1e-6:
-                space_cap[fab] = max(0.0, space_cap[fab] - (used - space_cap[fab]) - 1e-3)
+                space_cap[fab] = max(
+                    0.0, space_cap[fab] - (used - space_cap[fab]) - 1e-3
+                )
                 exceeded = True
         if not exceeded:
             return tor_req
@@ -317,7 +349,9 @@ def optimize_tools_milp(flow, mintech_tools):
                 max_m = mintech_tools[fab][ws]
                 for i in range(1, max_m + 1):
                     coeffs.append((idx_y[(q_idx, fab, ws, i)], WS_SPECS[ws]["space"]))
-                coeffs.append((idx_t[(q_idx, fab, ws)], WS_SPECS[WS_PAIRS[ws]]["space"]))
+                coeffs.append(
+                    (idx_t[(q_idx, fab, ws)], WS_SPECS[WS_PAIRS[ws]]["space"])
+                )
             add_constraint(coeffs, -np.inf, FAB_SPACE[fab])
 
     # inc/dec constraints for mintech and tor
@@ -326,8 +360,12 @@ def optimize_tools_milp(flow, mintech_tools):
             for ws in ws_list:
                 max_m = mintech_tools[fab][ws]
                 # mintech count expressions
-                coeffs_curr = [(idx_y[(q_idx, fab, ws, i)], -1.0) for i in range(1, max_m + 1)]
-                coeffs_curr_pos = [(idx_y[(q_idx, fab, ws, i)], 1.0) for i in range(1, max_m + 1)]
+                coeffs_curr = [
+                    (idx_y[(q_idx, fab, ws, i)], -1.0) for i in range(1, max_m + 1)
+                ]
+                coeffs_curr_pos = [
+                    (idx_y[(q_idx, fab, ws, i)], 1.0) for i in range(1, max_m + 1)
+                ]
                 if q_idx == 1:
                     prev_count = max_m
                     add_constraint(
@@ -342,36 +380,60 @@ def optimize_tools_milp(flow, mintech_tools):
                     )
                     prev_t = t0[fab][ws]
                     add_constraint(
-                        [(idx_inc_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], -1.0)],
+                        [
+                            (idx_inc_t[(q_idx, fab, ws)], 1.0),
+                            (idx_t[(q_idx, fab, ws)], -1.0),
+                        ],
                         -prev_t,
                         np.inf,
                     )
                     add_constraint(
-                        [(idx_dec_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], 1.0)],
+                        [
+                            (idx_dec_t[(q_idx, fab, ws)], 1.0),
+                            (idx_t[(q_idx, fab, ws)], 1.0),
+                        ],
                         prev_t,
                         np.inf,
                     )
                 else:
                     # prev mintech from q-1
-                    coeffs_prev = [(idx_y[(q_idx - 1, fab, ws, i)], 1.0) for i in range(1, max_m + 1)]
+                    coeffs_prev = [
+                        (idx_y[(q_idx - 1, fab, ws, i)], 1.0)
+                        for i in range(1, max_m + 1)
+                    ]
                     add_constraint(
-                        [(idx_inc_m[(q_idx, fab, ws)], 1.0)] + coeffs_curr + coeffs_prev,
+                        [(idx_inc_m[(q_idx, fab, ws)], 1.0)]
+                        + coeffs_curr
+                        + coeffs_prev,
                         0.0,
                         np.inf,
                     )
                     add_constraint(
-                        [(idx_dec_m[(q_idx, fab, ws)], 1.0)] + coeffs_curr_pos + [(idx_y[(q_idx - 1, fab, ws, i)], -1.0) for i in range(1, max_m + 1)],
+                        [(idx_dec_m[(q_idx, fab, ws)], 1.0)]
+                        + coeffs_curr_pos
+                        + [
+                            (idx_y[(q_idx - 1, fab, ws, i)], -1.0)
+                            for i in range(1, max_m + 1)
+                        ],
                         0.0,
                         np.inf,
                     )
                     # tor inc/dec
                     add_constraint(
-                        [(idx_inc_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], -1.0), (idx_t[(q_idx - 1, fab, ws)], 1.0)],
+                        [
+                            (idx_inc_t[(q_idx, fab, ws)], 1.0),
+                            (idx_t[(q_idx, fab, ws)], -1.0),
+                            (idx_t[(q_idx - 1, fab, ws)], 1.0),
+                        ],
                         0.0,
                         np.inf,
                     )
                     add_constraint(
-                        [(idx_dec_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx - 1, fab, ws)], -1.0)],
+                        [
+                            (idx_dec_t[(q_idx, fab, ws)], 1.0),
+                            (idx_t[(q_idx, fab, ws)], 1.0),
+                            (idx_t[(q_idx - 1, fab, ws)], -1.0),
+                        ],
                         0.0,
                         np.inf,
                     )
@@ -402,9 +464,13 @@ def optimize_tools_milp(flow, mintech_tools):
         for fab in fabs:
             for ws in ws_list:
                 max_m = mintech_tools[fab][ws]
-                count_m = sum(x[idx_y[(q_idx, fab, ws, i)]] for i in range(1, max_m + 1))
+                count_m = sum(
+                    x[idx_y[(q_idx, fab, ws, i)]] for i in range(1, max_m + 1)
+                )
                 tool_plan[q_idx][fab][ws] = int(round(count_m))
-                tool_plan[q_idx][fab][WS_PAIRS[ws]] = int(round(x[idx_t[(q_idx, fab, ws)]]))
+                tool_plan[q_idx][fab][WS_PAIRS[ws]] = int(
+                    round(x[idx_t[(q_idx, fab, ws)]])
+                )
     return tool_plan
 
 
@@ -426,6 +492,8 @@ def _moveout_and_capex(tool_plan):
 
 
 def build_flow_and_tools():
+    if USE_GLOBAL_MILP:
+        return build_flow_and_tools_global()
     flow = build_empty_flow()
     mintech_tools = base_mintech_tools()
     mintech_space = base_mintech_space(mintech_tools)
@@ -435,7 +503,9 @@ def build_flow_and_tools():
     for q_idx in range(8):
         # use per-node constant shares to minimize transfers
         if q_idx == 0:
-            remaining_space = {fab: FAB_SPACE[fab] - mintech_space[fab] for fab in [1, 2, 3]}
+            remaining_space = {
+                fab: FAB_SPACE[fab] - mintech_space[fab] for fab in [1, 2, 3]
+            }
             try:
                 shares = solve_node_shares(q_idx, remaining_space)
             except RuntimeError:
@@ -443,14 +513,20 @@ def build_flow_and_tools():
                 for node in q1a_flow[q_idx]:
                     for step in q1a_flow[q_idx][node]:
                         for fab in [1, 2, 3]:
-                            flow[q_idx][node][step][fab] = q1a_flow[q_idx][node][step][fab]
+                            flow[q_idx][node][step][fab] = q1a_flow[q_idx][node][step][
+                                fab
+                            ]
                 tool_plan[q_idx] = q1a_tool[q_idx]
                 continue
         else:
             shares = solve_node_shares(q_idx)
 
         def build_flow_from_shares():
-            for node, steps in [(1, range(1, 12)), (2, range(1, 16)), (3, range(1, 18))]:
+            for node, steps in [
+                (1, range(1, 12)),
+                (2, range(1, 16)),
+                (3, range(1, 18)),
+            ]:
                 load = TARGET_LOADING[node][q_idx]
                 for step in steps:
                     for fab in [1, 2, 3]:
@@ -469,7 +545,10 @@ def build_flow_and_tools():
             used = {fab: 0.0 for fab in [1, 2, 3]}
             for fab in [1, 2, 3]:
                 for ws in MINTECH_WS:
-                    used[fab] += math.ceil(tor_req_local[ws][fab]) * WS_SPECS[WS_PAIRS[ws]]["space"]
+                    used[fab] += (
+                        math.ceil(tor_req_local[ws][fab])
+                        * WS_SPECS[WS_PAIRS[ws]]["space"]
+                    )
             return used
 
         # adjust shares to satisfy integer space
@@ -510,7 +589,9 @@ def build_flow_and_tools():
                     build_flow_from_shares()
                     tor_req_try = tor_req_from_flow()
                     used_try = space_used(tor_req_try)
-                    overage = sum(max(0.0, used_try[f] - FAB_SPACE[f]) for f in [1, 2, 3])
+                    overage = sum(
+                        max(0.0, used_try[f] - FAB_SPACE[f]) for f in [1, 2, 3]
+                    )
                     if best is None or overage < best[0]:
                         best = (overage, node, fab_to, used_try, tor_req_try)
                     # revert
@@ -559,7 +640,14 @@ def build_flow_and_tools():
                             cost_try = tor_capex(tor_req_try)
                             if cost_try < base_cost - 1e-6:
                                 if best is None or cost_try < best[0]:
-                                    best = (cost_try, node, fab_from, fab_to, tor_req_try, used_try)
+                                    best = (
+                                        cost_try,
+                                        node,
+                                        fab_from,
+                                        fab_to,
+                                        tor_req_try,
+                                        used_try,
+                                    )
                         # revert
                         shares[node][fab_from] += delta
                         shares[node][fab_to] -= delta
@@ -644,13 +732,18 @@ def build_flow_and_tools():
                 return total_tor
 
             # initialize tor_req per fab/ws for mintech_keep=0
-            tor_req_by_fab = {fab: {ws: tor_req[ws][fab] for ws in MINTECH_WS} for fab in [1, 2, 3]}
+            tor_req_by_fab = {
+                fab: {ws: tor_req[ws][fab] for ws in MINTECH_WS} for fab in [1, 2, 3]
+            }
 
             def used_space_fab(fab):
                 used = 0.0
                 for ws in MINTECH_WS:
                     used += mintech_keep[fab][ws] * WS_SPECS[ws]["space"]
-                    used += math.ceil(tor_req_by_fab[fab][ws]) * WS_SPECS[WS_PAIRS[ws]]["space"]
+                    used += (
+                        math.ceil(tor_req_by_fab[fab][ws])
+                        * WS_SPECS[WS_PAIRS[ws]]["space"]
+                    )
                 return used
 
             for fab in [1, 2, 3]:
@@ -666,12 +759,18 @@ def build_flow_and_tools():
                         new_tor = tor_req_ws(fab, ws, mintech_keep[fab][ws] + 1)
                         new_tools = math.ceil(new_tor)
                         delta_tools = new_tools - curr_tools
-                        net_space = WS_SPECS[ws]["space"] + delta_tools * WS_SPECS[WS_PAIRS[ws]]["space"]
+                        net_space = (
+                            WS_SPECS[ws]["space"]
+                            + delta_tools * WS_SPECS[WS_PAIRS[ws]]["space"]
+                        )
                         if used + net_space > FAB_SPACE[fab] + 1e-6:
                             continue
                         if mintech_keep[fab][ws] >= mintech_tools[fab][ws]:
                             continue
-                        savings = MOVEOUT_COST + (-delta_tools) * WS_SPECS[WS_PAIRS[ws]]["capex"]
+                        savings = (
+                            MOVEOUT_COST
+                            + (-delta_tools) * WS_SPECS[WS_PAIRS[ws]]["capex"]
+                        )
                         if savings <= 0:
                             continue
                         score = savings / max(0.001, net_space)
@@ -693,7 +792,9 @@ def build_flow_and_tools():
         tool_plan[q_idx] = {1: {}, 2: {}, 3: {}}
         for fab in [1, 2, 3]:
             for ws in MINTECH_WS:
-                tool_plan[q_idx][fab][ws] = mintech_tools[fab][ws] if q_idx == 0 else mintech_keep[fab][ws]
+                tool_plan[q_idx][fab][ws] = (
+                    mintech_tools[fab][ws] if q_idx == 0 else mintech_keep[fab][ws]
+                )
             for ws in MINTECH_WS:
                 ws_t = WS_PAIRS[ws]
                 tool_plan[q_idx][fab][ws_t] = int(math.ceil(tor_req[ws][fab]))

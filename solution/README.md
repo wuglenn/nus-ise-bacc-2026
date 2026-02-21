@@ -32,6 +32,13 @@ Using a lower-bound calculation for Q4'27:
 - Operate within existing fab space constraints.
 - Minimize total cost (transfers + move-outs + new tool purchases).
 
+### Q1b global MILP
+
+`scripts/solve_q1b_global.py` solves a full MILP over flow + tools using HiGHS
+via `scipy.optimize.milp`. It uses a time limit (`TIME_LIMIT_SECONDS`) and will
+emit a feasible solution if the time limit is reached before proven optimality.
+Increase the time limit for a tighter optimality gap.
+
 ## Cost summary
 
 Approximate cost rollup is written to `solution/cost_summary.md`.
