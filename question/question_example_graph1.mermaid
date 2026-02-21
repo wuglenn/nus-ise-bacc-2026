@@ -1,0 +1,43 @@
+flowchart TD
+    WAFERS["🔵 10,000 Wafers\nNode 1 — Q2'26"]
+
+    WAFERS -->|"5,000 wafers"| FAB1_START
+    WAFERS -->|"5,000 wafers"| FAB2_START
+
+    subgraph FAB1["🏭 Fab 1"]
+        FAB1_START(["Enter Fab 1"])
+        FAB1_S1["Step 1"]
+        FAB1_S2["Step 2"]
+        FAB1_S3["Step 3"]
+        FAB1_S4["Step 4"]
+        FAB1_S5["Step 5"]
+        FAB1_START --> FAB1_S1 --> FAB1_S2 --> FAB1_S3 --> FAB1_S4 --> FAB1_S5
+    end
+
+    subgraph FAB2["🏭 Fab 2"]
+        FAB2_START(["Enter Fab 2"])
+        FAB2_S1["Step 1"]
+        FAB2_S2["Step 2"]
+        FAB2_S3["Step 3"]
+        FAB2_S4["Step 4"]
+        FAB2_S5["Step 5"]
+        FAB2_START --> FAB2_S1 --> FAB2_S2 --> FAB2_S3 --> FAB2_S4 --> FAB2_S5
+    end
+
+    FAB1_S5 -->|"Transfer 5,000 wafers\n@ $50/wafer"| MERGE
+    FAB2_S5 -->|"Transfer 5,000 wafers\n@ $50/wafer"| MERGE
+
+    MERGE["⟶ 10,000 wafers merged"]
+
+    subgraph FAB3["🏭 Fab 3"]
+        FAB3_START(["Enter Fab 3"])
+        FAB3_S6["Step 6"]
+        FAB3_S7["Step 7"]
+        FAB3_S8["Step 8"]
+        FAB3_S9["Step 9"]
+        FAB3_S10["Step 10"]
+        FAB3_START --> FAB3_S6 --> FAB3_S7 --> FAB3_S8 --> FAB3_S9 --> FAB3_S10
+    end
+
+    MERGE --> FAB3_START
+    FAB3_S10 --> DONE["✅ Processing Complete\n10,000 wafers"]
