@@ -7,14 +7,14 @@ from __future__ import annotations
 from typing import Dict
 
 from solver_utils import (
-    QUARTERS,
-    NODE_STEPS,
-    WS_SPECS,
     MINTECH_WS,
-    WS_PAIRS,
+    NODE_STEPS,
+    QUARTERS,
     TARGET_LOADING,
-    base_mintech_tools,
+    WS_PAIRS,
+    WS_SPECS,
     base_mintech_space,
+    base_mintech_tools,
 )
 
 MINS_PER_WEEK = 7 * 24 * 60
@@ -30,7 +30,9 @@ def min_ratio_by_ws() -> Dict[str, float]:
     return ratio_min
 
 
-def lb_total_space(q_idx: int, k: float, ratio_min: Dict[str, float], mintech_space: float) -> float:
+def lb_total_space(
+    q_idx: int, k: float, ratio_min: Dict[str, float], mintech_space: float
+) -> float:
     req_m = {ws: 0.0 for ws in MINTECH_WS}
     for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
         load = TARGET_LOADING[node][q_idx] * k
@@ -43,11 +45,15 @@ def lb_total_space(q_idx: int, k: float, ratio_min: Dict[str, float], mintech_sp
 
     overflow = {ws: max(0.0, req_m[ws] - avail[ws]) for ws in MINTECH_WS}
     lb_tor_tools = {ws: overflow[ws] * ratio_min[ws] for ws in MINTECH_WS}
-    lb_tor_space = sum(lb_tor_tools[ws] * WS_SPECS[WS_PAIRS[ws]]["space"] for ws in MINTECH_WS)
+    lb_tor_space = sum(
+        lb_tor_tools[ws] * WS_SPECS[WS_PAIRS[ws]]["space"] for ws in MINTECH_WS
+    )
     return mintech_space + lb_tor_space
 
 
-def max_k_for_quarter(q_idx: int, ratio_min: Dict[str, float], mintech_space: float) -> float:
+def max_k_for_quarter(
+    q_idx: int, ratio_min: Dict[str, float], mintech_space: float
+) -> float:
     lo, hi = 0.0, 2.0
     for _ in range(40):
         mid = (lo + hi) / 2

@@ -1,6 +1,6 @@
 """
 Q1b solver: move-outs allowed, use TOR-only plan per quarter.
-Generates output/03_q2a_tooling.csv and output/04_q2a_flow.csv
+Generates output/03_q1b_tooling.csv and output/04_q1b_flow.csv
 """
 
 from __future__ import annotations
@@ -810,8 +810,8 @@ def build_flow_and_tools():
 
 def main() -> None:
     flow, tool_plan = build_flow_and_tools()
-    write_flow_csv("output/04_q2a_flow.csv", flow)
-    write_tooling_csv("output/03_q2a_tooling.csv", tool_plan)
+    write_flow_csv("output/04_q1b_flow.csv", flow)
+    write_tooling_csv("output/03_q1b_tooling.csv", tool_plan)
 
 
 if __name__ == "__main__":

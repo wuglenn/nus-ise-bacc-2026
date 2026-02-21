@@ -21,18 +21,17 @@ from typing import Dict, Iterable
 import numpy as np
 import scipy.sparse as sp
 from scipy.optimize import Bounds, LinearConstraint, milp
-
 from solver_utils import (
-    QUARTERS,
-    NODE_STEPS,
-    TARGET_LOADING,
-    WS_SPECS,
+    FAB_SPACE,
     MINTECH_WS,
+    NODE_STEPS,
+    QUARTERS,
+    TARGET_LOADING,
     TOR_WS,
     WS_PAIRS,
-    FAB_SPACE,
-    base_mintech_tools,
+    WS_SPECS,
     base_mintech_space,
+    base_mintech_tools,
     build_empty_flow,
     write_flow_csv,
     write_tooling_csv,
@@ -41,7 +40,9 @@ from solver_utils import (
 MINS_PER_WEEK = 7 * 24 * 60
 
 
-K_AFTER_Q1_27 = 0.62  # Applied to Q2'27..Q4'27 (quarter_idx 5..7) for the reduced-demand run.
+K_AFTER_Q1_27 = (
+    0.62  # Applied to Q2'27..Q4'27 (quarter_idx 5..7) for the reduced-demand run.
+)
 
 
 def _targets() -> Dict[int, list[float]]:
@@ -71,7 +72,9 @@ def _steps_for_ws(ws: str) -> list[tuple[int, int, float, float, int]]:
     return rows
 
 
-def _build_milp() -> tuple[Bounds, np.ndarray, np.ndarray, list[LinearConstraint], dict]:
+def _build_milp() -> tuple[
+    Bounds, np.ndarray, np.ndarray, list[LinearConstraint], dict
+]:
     fabs = [1, 2, 3]
     nodes = [1, 2, 3]
     node_steps = {1: list(range(1, 12)), 2: list(range(1, 16)), 3: list(range(1, 18))}
@@ -230,7 +233,10 @@ def _build_milp() -> tuple[Bounds, np.ndarray, np.ndarray, list[LinearConstraint
         for fab in fabs:
             for ws in MINTECH_WS:
                 add_row(
-                    [(idx_t[(q_idx, fab, ws)], 1.0), (idx_t[(q_idx - 1, fab, ws)], -1.0)],
+                    [
+                        (idx_t[(q_idx, fab, ws)], 1.0),
+                        (idx_t[(q_idx - 1, fab, ws)], -1.0),
+                    ],
                     0.0,
                     np.inf,
                 )
@@ -244,7 +250,9 @@ def build_flow_and_tools():
     res = milp(c, constraints=constraints, bounds=bounds, integrality=integrality)
     if not res.success:
         flow = build_empty_flow()
-        tool_plan: Dict[int, Dict[int, Dict[str, int]]] = {q: {1: {}, 2: {}, 3: {}} for q in range(8)}
+        tool_plan: Dict[int, Dict[int, Dict[str, int]]] = {
+            q: {1: {}, 2: {}, 3: {}} for q in range(8)
+        }
         return flow, tool_plan, True
 
     x = res.x
@@ -256,7 +264,9 @@ def build_flow_and_tools():
         flow[q_idx][node][step][fab] = float(x[i])
 
     mintech_tools = base_mintech_tools()
-    tool_plan: Dict[int, Dict[int, Dict[str, int]]] = {q: {1: {}, 2: {}, 3: {}} for q in range(8)}
+    tool_plan: Dict[int, Dict[int, Dict[str, int]]] = {
+        q: {1: {}, 2: {}, 3: {}} for q in range(8)
+    }
     for q_idx in range(8):
         for fab in [1, 2, 3]:
             for ws in MINTECH_WS:

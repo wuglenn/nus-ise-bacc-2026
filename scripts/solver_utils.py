@@ -10,15 +10,15 @@ from collections import defaultdict
 from typing import Dict, Iterable, List, Tuple
 
 from verify_constraints import (
+    FAB_SPACE,
+    INITIAL_TOOLS,
+    MINTECH_WS,
+    NODE_STEPS,
     QUARTERS,
     TARGET_LOADING,
-    NODE_STEPS,
-    WS_SPECS,
-    MINTECH_WS,
     TOR_WS,
     WS_PAIRS,
-    INITIAL_TOOLS,
-    FAB_SPACE,
+    WS_SPECS,
 )
 
 MINS_PER_WEEK = 7 * 24 * 60
@@ -48,7 +48,11 @@ def ws_ratio_bounds() -> Dict[str, Dict[str, float]]:
         ratios[ws_m].append(r)
     bounds: Dict[str, Dict[str, float]] = {}
     for ws in MINTECH_WS:
-        bounds[ws] = {"min": min(ratios[ws]), "max": max(ratios[ws]), "avg": sum(ratios[ws]) / len(ratios[ws])}
+        bounds[ws] = {
+            "min": min(ratios[ws]),
+            "max": max(ratios[ws]),
+            "avg": sum(ratios[ws]) / len(ratios[ws]),
+        }
     return bounds
 
 
@@ -90,7 +94,9 @@ def simulate_tor_requirements(
     Returns tor_req[fab][ws_mintech] in tool units (may be fractional).
     """
     by_ws = steps_by_ws()
-    tor_req: Dict[int, Dict[str, float]] = {fab: {ws: 0.0 for ws in MINTECH_WS} for fab in [1, 2, 3]}
+    tor_req: Dict[int, Dict[str, float]] = {
+        fab: {ws: 0.0 for ws in MINTECH_WS} for fab in [1, 2, 3]
+    }
 
     for fab in [1, 2, 3]:
         for ws in MINTECH_WS:
@@ -98,7 +104,9 @@ def simulate_tor_requirements(
             cumulative = 0.0
             total_tor = 0.0
             for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in by_ws[ws]:
-                load = flow.get(quarter_idx, {}).get(node, {}).get(step, {}).get(fab, 0.0)
+                load = (
+                    flow.get(quarter_idx, {}).get(node, {}).get(step, {}).get(fab, 0.0)
+                )
                 if load <= 0:
                     continue
                 req_m = step_tool_req(load, rpt_m, WS_SPECS[ws_m]["util"])
@@ -117,18 +125,31 @@ def simulate_tor_requirements(
 
 
 def build_empty_flow() -> Dict[int, Dict[int, Dict[int, Dict[int, float]]]]:
-    return defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(float))))
+    return defaultdict(
+        lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    )
 
 
-def write_flow_csv(path: str, flow: Dict[int, Dict[int, Dict[int, Dict[int, float]]]]) -> None:
+def write_flow_csv(
+    path: str, flow: Dict[int, Dict[int, Dict[int, Dict[int, float]]]]
+) -> None:
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["quarter", "node", "step", "fab", "loading"])
         for q_idx, q in enumerate(QUARTERS):
-            for node, steps in [(1, range(1, 12)), (2, range(1, 16)), (3, range(1, 18))]:
+            for node, steps in [
+                (1, range(1, 12)),
+                (2, range(1, 16)),
+                (3, range(1, 18)),
+            ]:
                 for step in steps:
                     for fab in [1, 2, 3]:
-                        val = flow.get(q_idx, {}).get(node, {}).get(step, {}).get(fab, 0.0)
+                        val = (
+                            flow.get(q_idx, {})
+                            .get(node, {})
+                            .get(step, {})
+                            .get(fab, 0.0)
+                        )
                         w.writerow([q, node, step, fab, f"{val:.12f}"])
 
 
@@ -141,23 +162,29 @@ def write_tooling_csv(
         w.writerow(["quarter", "ws", "fab1", "fab2", "fab3"])
         for q_idx, q in enumerate(QUARTERS):
             for ws in MINTECH_WS + TOR_WS:
-                w.writerow([
-                    q,
-                    ws,
-                    tool_plan.get(q_idx, {}).get(1, {}).get(ws, 0),
-                    tool_plan.get(q_idx, {}).get(2, {}).get(ws, 0),
-                    tool_plan.get(q_idx, {}).get(3, {}).get(ws, 0),
-                ])
+                w.writerow(
+                    [
+                        q,
+                        ws,
+                        tool_plan.get(q_idx, {}).get(1, {}).get(ws, 0),
+                        tool_plan.get(q_idx, {}).get(2, {}).get(ws, 0),
+                        tool_plan.get(q_idx, {}).get(3, {}).get(ws, 0),
+                    ]
+                )
 
 
 def write_q2_csv(path: str, rows: List[Dict[str, float]]) -> None:
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["quarter", "expected_loading", "combined_variance", "prob_undercap_scen1"])
+        w.writerow(
+            ["quarter", "expected_loading", "combined_variance", "prob_undercap_scen1"]
+        )
         for row in rows:
-            w.writerow([
-                row["quarter"],
-                f"{row['expected_loading']:.6f}",
-                f"{row['combined_variance']:.6f}",
-                f"{row['prob_undercap_scen1']:.6f}",
-            ])
+            w.writerow(
+                [
+                    row["quarter"],
+                    f"{row['expected_loading']:.6f}",
+                    f"{row['combined_variance']:.6f}",
+                    f"{row['prob_undercap_scen1']:.6f}",
+                ]
+            )

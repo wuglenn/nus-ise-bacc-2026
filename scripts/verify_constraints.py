@@ -81,8 +81,8 @@ MINS_PER_WEEK = 7 * 24 * 60  # 10080
 # Target loading (wafers/week per node per quarter)
 TARGET_LOADING = {
     1: [12000, 10000, 8500, 7500, 6000, 5000, 4000, 2000],
-    2: [5000,  5200,  5400, 5600, 6000, 6500, 7000, 7500],
-    3: [3000,  4500,  7000, 8000, 9000, 11000, 13000, 16000],
+    2: [5000, 5200, 5400, 5600, 6000, 6500, 7000, 7500],
+    3: [3000, 4500, 7000, 8000, 9000, 11000, 13000, 16000],
 }
 
 # Fab space limits (m²)
@@ -90,26 +90,41 @@ FAB_SPACE = {1: 1500.0, 2: 1300.0, 3: 700.0}
 
 # Workstation specs: util, m²/tool, capex/tool
 WS_SPECS = {
-    'A':  {'util': 0.78, 'space': 6.78, 'capex': 4.5e6},
-    'B':  {'util': 0.76, 'space': 3.96, 'capex': 6.0e6},
-    'C':  {'util': 0.80, 'space': 5.82, 'capex': 2.2e6},
-    'D':  {'util': 0.80, 'space': 5.61, 'capex': 4.0e6},
-    'E':  {'util': 0.76, 'space': 4.65, 'capex': 3.5e6},
-    'F':  {'util': 0.80, 'space': 3.68, 'capex': 6.0e6},
-    'A+': {'util': 0.84, 'space': 6.93, 'capex': 6.0e6},
-    'B+': {'util': 0.81, 'space': 3.72, 'capex': 8.0e6},
-    'C+': {'util': 0.86, 'space': 5.75, 'capex': 3.2e6},
-    'D+': {'util': 0.88, 'space': 5.74, 'capex': 5.5e6},
-    'E+': {'util': 0.84, 'space': 4.80, 'capex': 5.8e6},
-    'F+': {'util': 0.90, 'space': 3.57, 'capex': 8.0e6},
+    "A": {"util": 0.78, "space": 6.78, "capex": 4.5e6},
+    "B": {"util": 0.76, "space": 3.96, "capex": 6.0e6},
+    "C": {"util": 0.80, "space": 5.82, "capex": 2.2e6},
+    "D": {"util": 0.80, "space": 5.61, "capex": 4.0e6},
+    "E": {"util": 0.76, "space": 4.65, "capex": 3.5e6},
+    "F": {"util": 0.80, "space": 3.68, "capex": 6.0e6},
+    "A+": {"util": 0.84, "space": 6.93, "capex": 6.0e6},
+    "B+": {"util": 0.81, "space": 3.72, "capex": 8.0e6},
+    "C+": {"util": 0.86, "space": 5.75, "capex": 3.2e6},
+    "D+": {"util": 0.88, "space": 5.74, "capex": 5.5e6},
+    "E+": {"util": 0.84, "space": 4.80, "capex": 5.8e6},
+    "F+": {"util": 0.90, "space": 3.57, "capex": 8.0e6},
 }
 
 # Initial tool counts at start of Q1'26 (pre-filled, read-only in Excel)
 # (fab, ws_mintech) -> count
 INITIAL_TOOLS = {
-    (1, 'A'): 50, (1, 'B'): 25, (1, 'C'):  0, (1, 'D'): 50, (1, 'E'): 40, (1, 'F'): 90,
-    (2, 'A'): 35, (2, 'B'): 30, (2, 'C'):  0, (2, 'D'): 50, (2, 'E'): 30, (2, 'F'): 60,
-    (3, 'A'):  0, (3, 'B'):  0, (3, 'C'): 40, (3, 'D'): 35, (3, 'E'): 16, (3, 'F'): 36,
+    (1, "A"): 50,
+    (1, "B"): 25,
+    (1, "C"): 0,
+    (1, "D"): 50,
+    (1, "E"): 40,
+    (1, "F"): 90,
+    (2, "A"): 35,
+    (2, "B"): 30,
+    (2, "C"): 0,
+    (2, "D"): 50,
+    (2, "E"): 30,
+    (2, "F"): 60,
+    (3, "A"): 0,
+    (3, "B"): 0,
+    (3, "C"): 40,
+    (3, "D"): 35,
+    (3, "E"): 16,
+    (3, "F"): 36,
 }
 
 # Node step definitions: (node, step, ws_mintech, rpt_min, ws_tor, rpt_tor, rank)
@@ -117,57 +132,57 @@ INITIAL_TOOLS = {
 # Verified against the 'data' sheet of the answer Excel file.
 NODE_STEPS = [
     # Node 1 — 11 steps
-    (1,  1, 'D', 14, 'D+', 12,  4),
-    (1,  2, 'F', 25, 'F+', 21, 10),
-    (1,  3, 'F', 27, 'F+', 23,  8),
-    (1,  4, 'A', 20, 'A+', 16,  3),
-    (1,  5, 'F', 12, 'F+',  9, 11),
-    (1,  6, 'D', 27, 'D+', 21,  7),
-    (1,  7, 'D', 17, 'D+', 13,  9),
-    (1,  8, 'A', 18, 'A+', 16,  1),
-    (1,  9, 'A', 16, 'A+', 13,  2),
-    (1, 10, 'D', 14, 'D+', 11,  6),
-    (1, 11, 'F', 18, 'F+', 16,  3),
+    (1, 1, "D", 14, "D+", 12, 4),
+    (1, 2, "F", 25, "F+", 21, 10),
+    (1, 3, "F", 27, "F+", 23, 8),
+    (1, 4, "A", 20, "A+", 16, 3),
+    (1, 5, "F", 12, "F+", 9, 11),
+    (1, 6, "D", 27, "D+", 21, 7),
+    (1, 7, "D", 17, "D+", 13, 9),
+    (1, 8, "A", 18, "A+", 16, 1),
+    (1, 9, "A", 16, "A+", 13, 2),
+    (1, 10, "D", 14, "D+", 11, 6),
+    (1, 11, "F", 18, "F+", 16, 3),
     # Node 2 — 15 steps
-    (2,  1, 'F', 19, 'F+', 16,  9),
-    (2,  2, 'B', 20, 'B+', 18,  1),
-    (2,  3, 'E', 10, 'E+',  7, 11),
-    (2,  4, 'B', 25, 'B+', 19,  2),
-    (2,  5, 'B', 15, 'B+', 11,  3),
-    (2,  6, 'F', 16, 'F+', 14,  5),
-    (2,  7, 'F', 17, 'F+', 15,  4),
-    (2,  8, 'B', 22, 'B+', 16,  4),
-    (2,  9, 'E',  7, 'E+',  6,  4),
-    (2, 10, 'E',  9, 'E+',  7,  6),
-    (2, 11, 'E', 20, 'E+', 19,  2),
-    (2, 12, 'F', 21, 'F+', 18,  7),
-    (2, 13, 'E', 12, 'E+',  9,  8),
-    (2, 14, 'E', 15, 'E+', 12,  5),
-    (2, 15, 'E', 13, 'E+', 10,  7),
+    (2, 1, "F", 19, "F+", 16, 9),
+    (2, 2, "B", 20, "B+", 18, 1),
+    (2, 3, "E", 10, "E+", 7, 11),
+    (2, 4, "B", 25, "B+", 19, 2),
+    (2, 5, "B", 15, "B+", 11, 3),
+    (2, 6, "F", 16, "F+", 14, 5),
+    (2, 7, "F", 17, "F+", 15, 4),
+    (2, 8, "B", 22, "B+", 16, 4),
+    (2, 9, "E", 7, "E+", 6, 4),
+    (2, 10, "E", 9, "E+", 7, 6),
+    (2, 11, "E", 20, "E+", 19, 2),
+    (2, 12, "F", 21, "F+", 18, 7),
+    (2, 13, "E", 12, "E+", 9, 8),
+    (2, 14, "E", 15, "E+", 12, 5),
+    (2, 15, "E", 13, "E+", 10, 7),
     # Node 3 — 17 steps
-    (3,  1, 'C', 21, 'C+', 20,  1),
-    (3,  2, 'D',  9, 'D+',  7,  8),
-    (3,  3, 'E', 24, 'E+', 23,  1),
-    (3,  4, 'E', 15, 'E+', 11,  9),
-    (3,  5, 'F', 16, 'F+', 14,  6),
-    (3,  6, 'D', 12, 'D+', 11,  1),
-    (3,  7, 'C', 24, 'C+', 21,  3),
-    (3,  8, 'C', 19, 'C+', 13,  5),
-    (3,  9, 'D', 15, 'D+', 13,  3),
-    (3, 10, 'D', 24, 'D+', 20,  5),
-    (3, 11, 'E', 17, 'E+', 15,  3),
-    (3, 12, 'E', 18, 'E+', 13, 10),
-    (3, 13, 'F', 20, 'F+', 18,  2),
-    (3, 14, 'C', 12, 'C+', 11,  2),
-    (3, 15, 'D', 11, 'D+', 10,  2),
-    (3, 16, 'C', 25, 'C+', 20,  4),
-    (3, 17, 'F', 14, 'F+', 13,  1),
+    (3, 1, "C", 21, "C+", 20, 1),
+    (3, 2, "D", 9, "D+", 7, 8),
+    (3, 3, "E", 24, "E+", 23, 1),
+    (3, 4, "E", 15, "E+", 11, 9),
+    (3, 5, "F", 16, "F+", 14, 6),
+    (3, 6, "D", 12, "D+", 11, 1),
+    (3, 7, "C", 24, "C+", 21, 3),
+    (3, 8, "C", 19, "C+", 13, 5),
+    (3, 9, "D", 15, "D+", 13, 3),
+    (3, 10, "D", 24, "D+", 20, 5),
+    (3, 11, "E", 17, "E+", 15, 3),
+    (3, 12, "E", 18, "E+", 13, 10),
+    (3, 13, "F", 20, "F+", 18, 2),
+    (3, 14, "C", 12, "C+", 11, 2),
+    (3, 15, "D", 11, "D+", 10, 2),
+    (3, 16, "C", 25, "C+", 20, 4),
+    (3, 17, "F", 14, "F+", 13, 1),
 ]
 
-MINTECH_WS = ['A', 'B', 'C', 'D', 'E', 'F']
-TOR_WS     = ['A+', 'B+', 'C+', 'D+', 'E+', 'F+']
-ALL_WS     = MINTECH_WS + TOR_WS
-WS_PAIRS   = {m: t for m, t in zip(MINTECH_WS, TOR_WS)}  # e.g. 'A' -> 'A+'
+MINTECH_WS = ["A", "B", "C", "D", "E", "F"]
+TOR_WS = ["A+", "B+", "C+", "D+", "E+", "F+"]
+ALL_WS = MINTECH_WS + TOR_WS
+WS_PAIRS = {m: t for m, t in zip(MINTECH_WS, TOR_WS)}  # e.g. 'A' -> 'A+'
 
 NODE_STEPS_IDX = {}  # (node, step) -> row tuple
 for row in NODE_STEPS:
@@ -178,6 +193,7 @@ for row in NODE_STEPS:
 # ---------------------------------------------------------------------------
 # HELPER: get tool count from plan (falls back to initial for Q1'26 mintech)
 # ---------------------------------------------------------------------------
+
 
 def get_tools(tool_plan, q_idx, fab, ws):
     """Return tool count for (quarter_idx, fab, ws). Q1'26 mintech = initial values."""
@@ -194,6 +210,7 @@ def get_tools(tool_plan, q_idx, fab, ws):
 # For each (quarter, node, step): sum_fab flow[q][n][s][f] == target_loading[n][q]
 # ---------------------------------------------------------------------------
 
+
 def check_loading_fulfillment(flow):
     """
     Returns (passed: bool, violations: list of str)
@@ -202,7 +219,11 @@ def check_loading_fulfillment(flow):
     passed = True
     violations = []
     for q_idx in range(8):
-        for node, steps_data in [(1, range(1, 12)), (2, range(1, 16)), (3, range(1, 18))]:
+        for node, steps_data in [
+            (1, range(1, 12)),
+            (2, range(1, 16)),
+            (3, range(1, 18)),
+        ]:
             target = TARGET_LOADING[node][q_idx]
             for step in steps_data:
                 total = sum(
@@ -223,6 +244,7 @@ def check_loading_fulfillment(flow):
 # For each (quarter, fab): Σ_ws tool_count[q][fab][ws] × space/tool ≤ fab_space[fab]
 # ---------------------------------------------------------------------------
 
+
 def check_space(tool_plan):
     """
     Returns (passed: bool, violations: list of str)
@@ -233,7 +255,7 @@ def check_space(tool_plan):
     for q_idx in range(8):
         for fab in [1, 2, 3]:
             used = sum(
-                get_tools(tool_plan, q_idx, fab, ws) * WS_SPECS[ws]['space']
+                get_tools(tool_plan, q_idx, fab, ws) * WS_SPECS[ws]["space"]
                 for ws in ALL_WS
             )
             limit = FAB_SPACE[fab]
@@ -257,6 +279,7 @@ def check_space(tool_plan):
 # This exactly replicates the AH/AI/AJ/AK/AL/AM/AN/AO/AU-BB formula chain.
 # ---------------------------------------------------------------------------
 
+
 def tool_req(loading, rpt, util):
     """Tool requirement (fractional) for given loading/RPT/utilization."""
     return (loading * rpt) / (MINS_PER_WEEK * util)
@@ -274,21 +297,20 @@ def check_tool_capacity(tool_plan, flow):
             for ws in MINTECH_WS:
                 ws_tor = WS_PAIRS[ws]
                 avail_mintech = get_tools(tool_plan, q_idx, fab, ws)
-                avail_tor     = get_tools(tool_plan, q_idx, fab, ws_tor)
+                avail_tor = get_tools(tool_plan, q_idx, fab, ws_tor)
 
                 # Collect all (rank, req_mintech, req_tor) for steps using this WS at this fab
                 step_reqs = []
-                for (node, step, ws_m, rpt_m, ws_t, rpt_t, rank) in NODE_STEPS:
+                for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
                     if ws_m != ws:
                         continue
-                    loading = (flow.get(q_idx, {})
-                                   .get(node, {})
-                                   .get(step, {})
-                                   .get(fab, 0))
+                    loading = (
+                        flow.get(q_idx, {}).get(node, {}).get(step, {}).get(fab, 0)
+                    )
                     if loading == 0:
                         continue
-                    util_m = WS_SPECS[ws_m]['util']
-                    util_t = WS_SPECS[ws_t]['util']
+                    util_m = WS_SPECS[ws_m]["util"]
+                    util_t = WS_SPECS[ws_t]["util"]
                     req_m = tool_req(loading, rpt_m, util_m)
                     req_t = tool_req(loading, rpt_t, util_t)
                     step_reqs.append((rank, req_m, req_t))
@@ -301,7 +323,7 @@ def check_tool_capacity(tool_plan, flow):
                 total_req_on_mintech = 0.0
                 total_req_on_tor = 0.0
 
-                for (rank, req_m, req_t) in step_reqs:
+                for rank, req_m, req_t in step_reqs:
                     cumulative_req += req_m
                     overflow = max(0.0, cumulative_req - avail_mintech)
 
@@ -319,7 +341,7 @@ def check_tool_capacity(tool_plan, flow):
                         req_on_tor = req_t * overflow / req_m if req_m > 0 else 0.0
 
                     total_req_on_mintech += req_on_min
-                    total_req_on_tor     += req_on_tor
+                    total_req_on_tor += req_on_tor
 
                 if total_req_on_mintech > avail_mintech + 1e-9:
                     passed = False
@@ -341,6 +363,7 @@ def check_tool_capacity(tool_plan, flow):
 # Q1a EXTRA CONSTRAINT — No tool move-outs (tool counts cannot decrease)
 # ---------------------------------------------------------------------------
 
+
 def check_no_moveouts(tool_plan):
     """
     Q1a only: for every fab and WS, tool count must be non-decreasing across quarters.
@@ -356,7 +379,7 @@ def check_no_moveouts(tool_plan):
                 if curr < prev:
                     passed = False
                     violations.append(
-                        f"  Fab {fab} WS {ws}: count drops from {prev} ({QUARTERS[q_idx-1]}) "
+                        f"  Fab {fab} WS {ws}: count drops from {prev} ({QUARTERS[q_idx - 1]}) "
                         f"to {curr} ({QUARTERS[q_idx]})"
                     )
                 prev = curr
@@ -367,7 +390,8 @@ def check_no_moveouts(tool_plan):
 # MAIN VERIFICATION RUNNER
 # ---------------------------------------------------------------------------
 
-def verify(tool_plan, flow, mode='Q1a'):
+
+def verify(tool_plan, flow, mode="Q1a"):
     """
     Run all constraint checks and print a summary.
 
@@ -380,9 +404,9 @@ def verify(tool_plan, flow, mode='Q1a'):
     flow structure:
         flow[quarter_idx][node][step][fab] = wafers_per_week (float or int)
     """
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"CONSTRAINT VERIFICATION — {mode}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     all_pass = True
 
@@ -393,7 +417,7 @@ def verify(tool_plan, flow, mode='Q1a'):
     if v1:
         print("\n".join(v1[:20]))
         if len(v1) > 20:
-            print(f"  ... and {len(v1)-20} more violations")
+            print(f"  ... and {len(v1) - 20} more violations")
     all_pass = all_pass and ok1
 
     # --- Constraint 2: Space ---
@@ -411,11 +435,11 @@ def verify(tool_plan, flow, mode='Q1a'):
     if v3:
         print("\n".join(v3[:30]))
         if len(v3) > 30:
-            print(f"  ... and {len(v3)-30} more violations")
+            print(f"  ... and {len(v3) - 30} more violations")
     all_pass = all_pass and ok3
 
     # --- Q1a extra: No move-outs ---
-    if mode == 'Q1a':
+    if mode == "Q1a":
         ok4, v4 = check_no_moveouts(tool_plan)
         status = "PASS [OK]" if ok4 else "FAIL [!!]"
         print(f"\n[4] No Tool Move-outs (Q1a only): {status}")
@@ -423,16 +447,21 @@ def verify(tool_plan, flow, mode='Q1a'):
             print("\n".join(v4))
         all_pass = all_pass and ok4
 
-    print(f"\n{'='*60}")
-    overall = "ALL CONSTRAINTS SATISFIED (B4 = TRUE)" if all_pass else "SOME CONSTRAINTS FAILED (B4 = FALSE)"
+    print(f"\n{'=' * 60}")
+    overall = (
+        "ALL CONSTRAINTS SATISFIED (B4 = TRUE)"
+        if all_pass
+        else "SOME CONSTRAINTS FAILED (B4 = FALSE)"
+    )
     print(f"RESULT: {overall}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
     return all_pass
 
 
 # ---------------------------------------------------------------------------
 # UTILITY: compute space usage summary
 # ---------------------------------------------------------------------------
+
 
 def space_summary(tool_plan):
     """Print space usage per fab per quarter for debugging."""
@@ -442,7 +471,7 @@ def space_summary(tool_plan):
         row = []
         for q_idx in range(8):
             used = sum(
-                get_tools(tool_plan, q_idx, fab, ws) * WS_SPECS[ws]['space']
+                get_tools(tool_plan, q_idx, fab, ws) * WS_SPECS[ws]["space"]
                 for ws in ALL_WS
             )
             row.append(f"{used:9.1f}")
@@ -452,6 +481,7 @@ def space_summary(tool_plan):
 # ---------------------------------------------------------------------------
 # UTILITY: compute tool requirement summary per (quarter, fab, ws)
 # ---------------------------------------------------------------------------
+
 
 def capacity_summary(tool_plan, flow):
     """Print tool requirement vs available for each WS/Fab/Quarter."""
@@ -465,14 +495,20 @@ def capacity_summary(tool_plan, flow):
                 avail_t = get_tools(tool_plan, q_idx, fab, ws_tor)
                 # quick total req (pre-allocation)
                 total_req_m = sum(
-                    tool_req(flow.get(q_idx,{}).get(n,{}).get(s,{}).get(fab,0),
-                             rpt_m, WS_SPECS[ws]['util'])
+                    tool_req(
+                        flow.get(q_idx, {}).get(n, {}).get(s, {}).get(fab, 0),
+                        rpt_m,
+                        WS_SPECS[ws]["util"],
+                    )
                     for (n, s, ws_m, rpt_m, ws_t, rpt_t, rank) in NODE_STEPS
                     if ws_m == ws
                 )
                 total_req_t = sum(
-                    tool_req(flow.get(q_idx,{}).get(n,{}).get(s,{}).get(fab,0),
-                             rpt_t, WS_SPECS[ws_tor]['util'])
+                    tool_req(
+                        flow.get(q_idx, {}).get(n, {}).get(s, {}).get(fab, 0),
+                        rpt_t,
+                        WS_SPECS[ws_tor]["util"],
+                    )
                     for (n, s, ws_m, rpt_m, ws_t, rpt_t, rank) in NODE_STEPS
                     if ws_m == ws
                 )
@@ -488,9 +524,10 @@ def capacity_summary(tool_plan, flow):
 # UTILITY: Excel cell address helpers
 # ---------------------------------------------------------------------------
 
+
 def tooling_cell(quarter_idx, fab, ws):
     """Return the Excel cell address for a tooling plan entry."""
-    col_map = {1: 'C', 2: 'D', 3: 'E'}
+    col_map = {1: "C", 2: "D", 3: "E"}
     col = col_map[fab]
     if ws in MINTECH_WS:
         offset = MINTECH_WS.index(ws)
@@ -521,7 +558,9 @@ if __name__ == "__main__":
     tool_plan = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
     # flow[q_idx][node][step][fab] = wafers/week
-    flow = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(float))))
+    flow = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+    )
 
     # Example: assign all loading to Fab 1 for every step (likely violates space/capacity)
     # for q_idx in range(8):
@@ -531,7 +570,7 @@ if __name__ == "__main__":
     #             flow[q_idx][node][step][2] = 0
     #             flow[q_idx][node][step][3] = 0
 
-    verify(tool_plan, flow, mode='Q1a')
+    verify(tool_plan, flow, mode="Q1a")
 
     # Uncomment to print diagnostics:
     # space_summary(tool_plan)

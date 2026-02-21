@@ -20,7 +20,7 @@ def main() -> None:
     solve_q1a()
 
     q1a = summarize("output/02_q1a_flow.csv", "output/01_q1a_tooling.csv")
-    q1b = summarize("output/04_q2a_flow.csv", "output/03_q2a_tooling.csv")
+    q1b = summarize("output/04_q1b_flow.csv", "output/03_q1b_tooling.csv")
 
     out = Path("solution")
     out.mkdir(parents=True, exist_ok=True)

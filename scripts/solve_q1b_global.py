@@ -14,7 +14,7 @@ import scipy.sparse as sp
 from scipy.optimize import Bounds, LinearConstraint, milp
 
 try:
-    from pyscipopt import Model, quicksum, SCIP_PARAMSETTING
+    from pyscipopt import SCIP_PARAMSETTING, Model, quicksum
 except Exception:  # pragma: no cover - optional dependency
     Model = None
     quicksum = None
@@ -37,6 +37,8 @@ MINS_PER_WEEK = 7 * 24 * 60
 TRANSFER_COST_PER_WAFER = 50
 WEEKS_PER_Q = 13
 MOVEOUT_COST = 1_000_000
+
+
 def _time_limit_seconds() -> int | None:
     val = os.getenv("Q1B_TIME_LIMIT")
     if val is None:
@@ -413,8 +415,8 @@ def main() -> None:
     flow, tool_plan = build_flow_and_tools_global()
     out_dir = os.getenv("Q1B_OUTPUT_DIR", "output")
     os.makedirs(out_dir, exist_ok=True)
-    write_flow_csv(os.path.join(out_dir, "04_q2a_flow.csv"), flow)
-    write_tooling_csv(os.path.join(out_dir, "03_q2a_tooling.csv"), tool_plan)
+    write_flow_csv(os.path.join(out_dir, "04_q1b_flow.csv"), flow)
+    write_tooling_csv(os.path.join(out_dir, "03_q1b_tooling.csv"), tool_plan)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Dict
 
-from solver_utils import QUARTERS, NODE_STEPS, MINTECH_WS, TOR_WS, WS_SPECS
+from solver_utils import MINTECH_WS, NODE_STEPS, QUARTERS, TOR_WS, WS_SPECS
 from test_constraints import load_flow, load_tooling
 
 
@@ -19,6 +19,7 @@ def _has_data_rows(path: str) -> bool:
     with open(path, newline="") as f:
         header = f.readline()
         return f.readline() != ""
+
 
 TRANSFER_COST_PER_WAFER = 50
 WEEKS_PER_Q = 13
@@ -78,7 +79,7 @@ def summarize(flow_path: str, tooling_path: str) -> Dict[str, float]:
 
 def main() -> None:
     q1a = summarize("output/02_q1a_flow.csv", "output/01_q1a_tooling.csv")
-    q1b = summarize("output/04_q2a_flow.csv", "output/03_q2a_tooling.csv")
+    q1b = summarize("output/04_q1b_flow.csv", "output/03_q1b_tooling.csv")
     print("Q1a cost summary:", q1a)
     print("Q1b cost summary:", q1b)
 

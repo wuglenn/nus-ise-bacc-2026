@@ -5,10 +5,10 @@ Generate Q2 analytic outputs into output/05_q2_node*.csv
 from __future__ import annotations
 
 import math
-from typing import List, Dict
+from typing import Dict, List
 
 from solver_utils import QUARTERS, write_q2_csv
-from test_constraints import SCENARIOS, PROBS
+from test_constraints import PROBS, SCENARIOS
 
 
 def expected_loading(node: int, q_idx: int) -> float:
@@ -18,10 +18,11 @@ def expected_loading(node: int, q_idx: int) -> float:
 def combined_variance(node: int, q_idx: int) -> float:
     el = expected_loading(node, q_idx)
     el2 = sum(
-        PROBS[i] * (SCENARIOS[node][i][q_idx] ** 2 + (0.10 * SCENARIOS[node][i][q_idx]) ** 2)
+        PROBS[i]
+        * (SCENARIOS[node][i][q_idx] ** 2 + (0.10 * SCENARIOS[node][i][q_idx]) ** 2)
         for i in range(3)
     )
-    return el2 - el ** 2
+    return el2 - el**2
 
 
 def prob_undercap_scen1(node: int, q_idx: int) -> float:
