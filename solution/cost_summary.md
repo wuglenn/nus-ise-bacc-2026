@@ -12,8 +12,8 @@ Move-out cost uses quarter-to-quarter tool count deltas only.
 ## Q1b
 
 {
-  "transfer": 488591.3315273663,
+  "transfer": 585489.9204788259,
   "moveout": 314000000.0,
-  "capex": 1912300000.0,
-  "total": 2226788591.331527
+  "capex": 1688300000.0,
+  "total": 2002885489.9204788
 }

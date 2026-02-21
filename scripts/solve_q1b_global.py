@@ -6,11 +6,19 @@ transfer cost + capex + moveout cost under space and mintech-first constraints.
 from __future__ import annotations
 
 import math
+import os
 from typing import Dict, Tuple
 
 import numpy as np
 import scipy.sparse as sp
 from scipy.optimize import Bounds, LinearConstraint, milp
+
+try:
+    from pyscipopt import Model, quicksum, SCIP_PARAMSETTING
+except Exception:  # pragma: no cover - optional dependency
+    Model = None
+    quicksum = None
+    SCIP_PARAMSETTING = None
 from solver_utils import (
     FAB_SPACE,
     MINTECH_WS,
@@ -29,7 +37,16 @@ MINS_PER_WEEK = 7 * 24 * 60
 TRANSFER_COST_PER_WAFER = 50
 WEEKS_PER_Q = 13
 MOVEOUT_COST = 1_000_000
-TIME_LIMIT_SECONDS = 600  # set to None for no limit
+def _time_limit_seconds() -> int | None:
+    val = os.getenv("Q1B_TIME_LIMIT")
+    if val is None:
+        return 600
+    if val.strip().lower() in {"none", "inf", "infinite"}:
+        return None
+    return int(val)
+
+
+TIME_LIMIT_SECONDS = _time_limit_seconds()
 
 
 def _ws_steps():
@@ -42,6 +59,88 @@ def _ws_steps():
     for ws in MINTECH_WS:
         ws_steps[ws].sort(key=lambda x: (x[0], x[1], x[2]))
     return ws_steps
+
+
+def _solve_with_highs(c, constraints, bounds, integrality):
+    options = {"disp": True, "presolve": True}
+    if TIME_LIMIT_SECONDS is not None:
+        options["time_limit"] = TIME_LIMIT_SECONDS
+    res = milp(
+        c,
+        constraints=constraints,
+        bounds=bounds,
+        integrality=integrality,
+        options=options,
+    )
+    if not res.success:
+        if res.x is None:
+            raise RuntimeError(f"Global MILP failed: {res.message}")
+        print(f"[warn] Global MILP not optimal: {res.message}")
+    return res.x
+
+
+def _solve_with_scip(c, A, lbs, ubs, bounds, integrality):
+    if Model is None:
+        raise RuntimeError("PySCIPOpt is not installed.")
+    model = Model("q1b_global")
+    model.setMinimize()
+    model.setPresolve(SCIP_PARAMSETTING.AGGRESSIVE)
+    if TIME_LIMIT_SECONDS is not None:
+        model.setRealParam("limits/time", float(TIME_LIMIT_SECONDS))
+
+    lb = bounds.lb
+    ub = bounds.ub
+    n_vars = len(c)
+    vars_list = []
+    inf = model.infinity()
+    for i in range(n_vars):
+        v_lb = lb[i]
+        v_ub = ub[i]
+        if v_ub >= 1e20 or v_ub == np.inf:
+            v_ub = inf
+        if integrality[i] == 1:
+            v = model.addVar(lb=v_lb, ub=v_ub, vtype="I", name=f"x{i}")
+        else:
+            v = model.addVar(lb=v_lb, ub=v_ub, vtype="C", name=f"x{i}")
+        vars_list.append(v)
+
+    model.setObjective(quicksum(float(c[i]) * vars_list[i] for i in range(n_vars)))
+
+    A_csr = A.tocsr()
+    for i in range(A_csr.shape[0]):
+        start = A_csr.indptr[i]
+        end = A_csr.indptr[i + 1]
+        if start == end:
+            continue
+        expr = quicksum(
+            float(A_csr.data[k]) * vars_list[A_csr.indices[k]]
+            for k in range(start, end)
+        )
+        lb_i = lbs[i]
+        ub_i = ubs[i]
+        if lb_i <= -1e20:
+            lb_i = -inf
+        if ub_i >= 1e20:
+            ub_i = inf
+        if lb_i <= -inf and ub_i >= inf:
+            continue
+        if lb_i <= -inf:
+            model.addCons(expr <= ub_i)
+        elif ub_i >= inf:
+            model.addCons(expr >= lb_i)
+        else:
+            model.addCons(expr >= lb_i)
+            model.addCons(expr <= ub_i)
+
+    model.optimize()
+    status = model.getStatus()
+    if status not in {"optimal", "timelimit", "gaplimit", "bestsollimit"}:
+        raise RuntimeError(f"SCIP failed: {status}")
+    sol = model.getBestSol()
+    if sol is None:
+        raise RuntimeError(f"SCIP produced no solution: {status}")
+    x = np.array([model.getSolVal(sol, v) for v in vars_list])
+    return x
 
 
 def build_flow_and_tools_global():
@@ -263,7 +362,9 @@ def build_flow_and_tools_global():
             add_row([(incT0, 1.0), (T0, -1.0)], 0.0, np.inf)
 
     A = sp.csr_matrix((data, (rows, cols)), shape=(row_idx, n_vars))
-    constraints = LinearConstraint(A, np.array(lbs), np.array(ubs))
+    lb_arr = np.array(lbs)
+    ub_arr = np.array(ubs)
+    constraints = LinearConstraint(A, lb_arr, ub_arr)
 
     # Objective
     c = np.zeros(n_vars)
@@ -282,22 +383,11 @@ def build_flow_and_tools_global():
         for ws in MINTECH_WS:
             c[idx_incT0[(fab, ws)]] = WS_SPECS[WS_PAIRS[ws]]["capex"]
 
-    options: dict[str, Any] = {"disp": True, "presolve": True}
-    if TIME_LIMIT_SECONDS is not None:
-        options["time_limit"] = TIME_LIMIT_SECONDS
-    res = milp(
-        c,
-        constraints=constraints,
-        bounds=bounds,
-        integrality=integrality,
-        options=options,
-    )
-    if not res.success:
-        if res.x is None:
-            raise RuntimeError(f"Global MILP failed: {res.message}")
-        print(f"[warn] Global MILP not optimal: {res.message}")
-
-    x = res.x
+    solver = os.getenv("Q1B_SOLVER", "highs").lower()
+    if solver == "scip":
+        x = _solve_with_scip(c, A, lb_arr, ub_arr, bounds, integrality)
+    else:
+        x = _solve_with_highs(c, constraints, bounds, integrality)
 
     # Build flow output
     flow = build_empty_flow()
@@ -321,8 +411,10 @@ def build_flow_and_tools_global():
 
 def main() -> None:
     flow, tool_plan = build_flow_and_tools_global()
-    write_flow_csv("output/04_q2a_flow.csv", flow)
-    write_tooling_csv("output/03_q2a_tooling.csv", tool_plan)
+    out_dir = os.getenv("Q1B_OUTPUT_DIR", "output")
+    os.makedirs(out_dir, exist_ok=True)
+    write_flow_csv(os.path.join(out_dir, "04_q2a_flow.csv"), flow)
+    write_tooling_csv(os.path.join(out_dir, "03_q2a_tooling.csv"), tool_plan)
 
 
 if __name__ == "__main__":
