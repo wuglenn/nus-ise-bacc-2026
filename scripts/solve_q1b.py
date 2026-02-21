@@ -29,6 +29,7 @@ from solve_q1a import build_flow_and_tools as build_q1a
 
 
 MINS_PER_WEEK = 7 * 24 * 60
+MOVEOUT_COST = 1_000_000
 
 
 def total_req_t_ws(q_idx: int) -> Dict[str, float]:
@@ -47,7 +48,7 @@ def node_ws_tor_coeff() -> Dict[Tuple[int, str], float]:
     return coeff
 
 
-def solve_node_shares(q_idx: int) -> Dict[int, Dict[int, float]]:
+def solve_node_shares(q_idx: int, space_cap: Dict[int, float] | None = None) -> Dict[int, Dict[int, float]]:
     """
     Solve for per-node fab shares so that:
       - each node's shares sum to 1
@@ -104,7 +105,7 @@ def solve_node_shares(q_idx: int) -> Dict[int, Dict[int, float]]:
                 load = TARGET_LOADING[node][q_idx]
                 row2[idx[(node, fab)]] += load * coeff.get((node, ws), 0.0) * WS_SPECS[WS_PAIRS[ws]]["space"]
         A_ub.append(row2)
-        b_ub.append(FAB_SPACE[fab])
+        b_ub.append((space_cap or FAB_SPACE)[fab])
 
     bounds = [(0.0, 1.0)] * (n_vars - 1) + [(0.0, None)]
     res = linprog(c, A_ub=np.array(A_ub), b_ub=np.array(b_ub), A_eq=np.array(A_eq), b_eq=np.array(b_eq), bounds=bounds, method="highs")
@@ -184,16 +185,21 @@ def build_flow_and_tools():
     tool_plan: Dict[int, Dict[int, Dict[str, int]]] = {}
 
     for q_idx in range(8):
-        if q_idx == 0:
-            # reuse Q1a quarter to respect fixed mintech in Q1'26
-            for node in q1a_flow[q_idx]:
-                for step in q1a_flow[q_idx][node]:
-                    for fab in [1, 2, 3]:
-                        flow[q_idx][node][step][fab] = q1a_flow[q_idx][node][step][fab]
-            tool_plan[q_idx] = q1a_tool[q_idx]
-            continue
         # use per-node constant shares to minimize transfers
-        shares = solve_node_shares(q_idx)
+        if q_idx == 0:
+            remaining_space = {fab: FAB_SPACE[fab] - mintech_space[fab] for fab in [1, 2, 3]}
+            try:
+                shares = solve_node_shares(q_idx, remaining_space)
+            except RuntimeError:
+                # fallback to Q1a quarter to respect fixed mintech in Q1'26
+                for node in q1a_flow[q_idx]:
+                    for step in q1a_flow[q_idx][node]:
+                        for fab in [1, 2, 3]:
+                            flow[q_idx][node][step][fab] = q1a_flow[q_idx][node][step][fab]
+                tool_plan[q_idx] = q1a_tool[q_idx]
+                continue
+        else:
+            shares = solve_node_shares(q_idx)
 
         def build_flow_from_shares():
             for node, steps in [(1, range(1, 12)), (2, range(1, 16)), (3, range(1, 18))]:
@@ -272,15 +278,174 @@ def build_flow_and_tools():
             tor_req = tor_req_from_flow()
             used = space_used(tor_req)
 
+        def tor_capex(tor_req_local):
+            total = 0.0
+            for ws in MINTECH_WS:
+                ws_t = WS_PAIRS[ws]
+                capex = WS_SPECS[ws_t]["capex"]
+                for fab in [1, 2, 3]:
+                    total += math.ceil(tor_req_local[ws][fab]) * capex
+            return total
+
+        # local search to reduce tor capex while staying within space
+        for _ in range(80):
+            build_flow_from_shares()
+            tor_req = tor_req_from_flow()
+            used = space_used(tor_req)
+            base_cost = tor_capex(tor_req)
+            best = None
+            for node in [1, 2, 3]:
+                for fab_from in [1, 2, 3]:
+                    for fab_to in [1, 2, 3]:
+                        if fab_to == fab_from:
+                            continue
+                        delta = min(0.01, shares[node][fab_from])
+                        if delta <= 0:
+                            continue
+                        shares[node][fab_from] -= delta
+                        shares[node][fab_to] += delta
+                        build_flow_from_shares()
+                        tor_req_try = tor_req_from_flow()
+                        used_try = space_used(tor_req_try)
+                        if all(used_try[f] <= FAB_SPACE[f] + 1e-6 for f in [1, 2, 3]):
+                            cost_try = tor_capex(tor_req_try)
+                            if cost_try < base_cost - 1e-6:
+                                if best is None or cost_try < best[0]:
+                                    best = (cost_try, node, fab_from, fab_to, tor_req_try, used_try)
+                        # revert
+                        shares[node][fab_from] += delta
+                        shares[node][fab_to] -= delta
+            if best is None:
+                break
+            _, node, fab_from, fab_to, tor_req, used = best
+            delta = min(0.01, shares[node][fab_from])
+            shares[node][fab_from] -= delta
+            shares[node][fab_to] += delta
+            build_flow_from_shares()
+            tor_req = tor_req_from_flow()
+            used = space_used(tor_req)
+
         # final flow + tor_req
         build_flow_from_shares()
         tor_req = tor_req_from_flow()
+
+        # Mintech fixed in Q1'26; allow move-outs from Q2'26 onward
+        mintech_keep = {fab: {ws: 0 for ws in MINTECH_WS} for fab in [1, 2, 3]}
+        if q_idx == 0:
+            # Precompute step reqs per fab/ws
+            step_reqs = {fab: {ws: [] for ws in MINTECH_WS} for fab in [1, 2, 3]}
+            for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
+                for fab in [1, 2, 3]:
+                    load = flow[q_idx][node][step][fab]
+                    if load <= 0:
+                        continue
+                    req_m = load * rpt_m / (MINS_PER_WEEK * WS_SPECS[ws_m]["util"])
+                    req_t = load * rpt_t / (MINS_PER_WEEK * WS_SPECS[ws_t]["util"])
+                    step_reqs[fab][ws_m].append((rank, req_m, req_t))
+            for fab in [1, 2, 3]:
+                for ws in MINTECH_WS:
+                    step_reqs[fab][ws].sort(key=lambda r: r[0])
+
+            def tor_req_ws_fixed(fab, ws, min_count):
+                cumulative = 0.0
+                total_tor = 0.0
+                for _, req_m, req_t in step_reqs[fab][ws]:
+                    cumulative += req_m
+                    overflow = max(0.0, cumulative - min_count)
+                    if overflow <= 0:
+                        req_on_tor = 0.0
+                    elif overflow >= req_m:
+                        req_on_tor = req_t
+                    else:
+                        req_on_tor = req_t * (overflow / req_m) if req_m > 0 else 0.0
+                    total_tor += req_on_tor
+                return total_tor
+
+            for fab in [1, 2, 3]:
+                for ws in MINTECH_WS:
+                    mintech_keep[fab][ws] = mintech_tools[fab][ws]
+                    tor_req[ws][fab] = tor_req_ws_fixed(fab, ws, mintech_tools[fab][ws])
+        else:
+            # Precompute step reqs per fab/ws
+            step_reqs = {fab: {ws: [] for ws in MINTECH_WS} for fab in [1, 2, 3]}
+            for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
+                for fab in [1, 2, 3]:
+                    load = flow[q_idx][node][step][fab]
+                    if load <= 0:
+                        continue
+                    req_m = load * rpt_m / (MINS_PER_WEEK * WS_SPECS[ws_m]["util"])
+                    req_t = load * rpt_t / (MINS_PER_WEEK * WS_SPECS[ws_t]["util"])
+                    step_reqs[fab][ws_m].append((rank, req_m, req_t))
+            for fab in [1, 2, 3]:
+                for ws in MINTECH_WS:
+                    step_reqs[fab][ws].sort(key=lambda r: r[0])
+
+            def tor_req_ws(fab, ws, min_count):
+                cumulative = 0.0
+                total_tor = 0.0
+                for _, req_m, req_t in step_reqs[fab][ws]:
+                    cumulative += req_m
+                    overflow = max(0.0, cumulative - min_count)
+                    if overflow <= 0:
+                        req_on_tor = 0.0
+                    elif overflow >= req_m:
+                        req_on_tor = req_t
+                    else:
+                        req_on_tor = req_t * (overflow / req_m) if req_m > 0 else 0.0
+                    total_tor += req_on_tor
+                return total_tor
+
+            # initialize tor_req per fab/ws for mintech_keep=0
+            tor_req_by_fab = {fab: {ws: tor_req[ws][fab] for ws in MINTECH_WS} for fab in [1, 2, 3]}
+
+            def used_space_fab(fab):
+                used = 0.0
+                for ws in MINTECH_WS:
+                    used += mintech_keep[fab][ws] * WS_SPECS[ws]["space"]
+                    used += math.ceil(tor_req_by_fab[fab][ws]) * WS_SPECS[WS_PAIRS[ws]]["space"]
+                return used
+
+            for fab in [1, 2, 3]:
+                used = used_space_fab(fab)
+                remaining = FAB_SPACE[fab] - used
+                if remaining <= 0:
+                    continue
+                while True:
+                    best = None
+                    for ws in MINTECH_WS:
+                        curr_tor = tor_req_by_fab[fab][ws]
+                        curr_tools = math.ceil(curr_tor)
+                        new_tor = tor_req_ws(fab, ws, mintech_keep[fab][ws] + 1)
+                        new_tools = math.ceil(new_tor)
+                        delta_tools = new_tools - curr_tools
+                        net_space = WS_SPECS[ws]["space"] + delta_tools * WS_SPECS[WS_PAIRS[ws]]["space"]
+                        if used + net_space > FAB_SPACE[fab] + 1e-6:
+                            continue
+                        if mintech_keep[fab][ws] >= mintech_tools[fab][ws]:
+                            continue
+                        savings = MOVEOUT_COST + (-delta_tools) * WS_SPECS[WS_PAIRS[ws]]["capex"]
+                        if savings <= 0:
+                            continue
+                        score = savings / max(0.001, net_space)
+                        if best is None or score > best[0]:
+                            best = (score, ws, new_tor, net_space)
+                    if best is None:
+                        break
+                    _, ws, new_tor, net_space = best
+                    mintech_keep[fab][ws] += 1
+                    tor_req_by_fab[fab][ws] = new_tor
+                    used += net_space
+
+            # update tor_req from tor_req_by_fab
+            for ws in MINTECH_WS:
+                for fab in [1, 2, 3]:
+                    tor_req[ws][fab] = tor_req_by_fab[fab][ws]
 
         # tooling plan for this quarter
         tool_plan[q_idx] = {1: {}, 2: {}, 3: {}}
         for fab in [1, 2, 3]:
             for ws in MINTECH_WS:
-                tool_plan[q_idx][fab][ws] = mintech_tools[fab][ws] if q_idx == 0 else 0
+                tool_plan[q_idx][fab][ws] = mintech_tools[fab][ws] if q_idx == 0 else mintech_keep[fab][ws]
             for ws in MINTECH_WS:
                 ws_t = WS_PAIRS[ws]
                 tool_plan[q_idx][fab][ws_t] = int(math.ceil(tor_req[ws][fab]))
