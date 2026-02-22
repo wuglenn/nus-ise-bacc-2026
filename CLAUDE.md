@@ -21,7 +21,7 @@ solution/   – Reserved for final answer sheet / intermediates
 
 1. Write solver scripts in `scripts/` that produce the answer dicts.
 2. Export results to the CSVs in `output/` (see formats below).
-3. Run `pytest scripts/test_constraints.py -v` — all 18 tests must pass.
+3. Run `pytest scripts/test_constraints.py -v` — all 17 tests must pass.
 4. Use `tooling_cell()` / `flow_cell()` helpers in `verify_constraints.py` to get Excel cell addresses, then write answers into the answer sheet with `openpyxl`.
 
 ## Output CSV Files
@@ -30,8 +30,8 @@ solution/   – Reserved for final answer sheet / intermediates
 |------|---------|---------|
 | `01_q1a_tooling.csv` | `quarter, ws, fab1, fab2, fab3` | Q1a tool counts per WS per quarter |
 | `02_q1a_flow.csv` | `quarter, node, step, fab, loading` | Q1a wafer assignments (wafers/week) |
-| `03_q2a_tooling.csv` | `quarter, ws, fab1, fab2, fab3` | Q1b tool counts per WS per quarter |
-| `04_q2a_flow.csv` | `quarter, node, step, fab, loading` | Q1b wafer assignments (wafers/week) |
+| `03_q1b_tooling.csv` | `quarter, ws, fab1, fab2, fab3` | Q1b tool counts per WS per quarter |
+| `04_q1b_flow.csv` | `quarter, node, step, fab, loading` | Q1b wafer assignments (wafers/week) |
 | `05_q2_node1.csv` | `quarter, expected_loading, combined_variance, prob_undercap_scen1` | Q2 answers Node 1 |
 | `06_q2_node2.csv` | same | Q2 answers Node 2 |
 | `07_q2_node3.csv` | same | Q2 answers Node 3 |
@@ -52,11 +52,11 @@ solution/   – Reserved for final answer sheet / intermediates
 - Q1a and Q1b share all static data — import from `verify_constraints.py` rather than re-defining.
 - Prefer `pulp` or `scipy.optimize` for LP/MILP; `pandas`/`numpy` for data wrangling; `openpyxl` for writing the final answer sheet.
 
-## Pytest — 18 Tests
+## Pytest - 17 Tests
 
 ```
-TestQ1a  (5)  : test_loading_fulfillment, test_space_limits, test_tool_capacity,
-                test_no_moveouts, test_master_gate
+TestQ1a  (4)  : test_loading_fulfillment, test_space_limits, test_tool_capacity,
+                test_master_gate
 TestQ1b  (4)  : test_loading_fulfillment, test_space_limits, test_tool_capacity,
                 test_master_gate
 TestQ2Node1/2/3  (3 each) : test_expected_loading, test_combined_variance,

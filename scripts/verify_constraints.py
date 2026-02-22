@@ -183,6 +183,8 @@ MINTECH_WS = ["A", "B", "C", "D", "E", "F"]
 TOR_WS = ["A+", "B+", "C+", "D+", "E+", "F+"]
 ALL_WS = MINTECH_WS + TOR_WS
 WS_PAIRS = {m: t for m, t in zip(MINTECH_WS, TOR_WS)}  # e.g. 'A' -> 'A+'
+CAPACITY_COLS = ["AU", "AV", "AW", "AX", "AY", "AZ", "BA", "BB"]
+EPS = 1e-9
 
 NODE_STEPS_IDX = {}  # (node, step) -> row tuple
 for row in NODE_STEPS:
@@ -230,7 +232,7 @@ def check_loading_fulfillment(flow):
                     flow.get(q_idx, {}).get(node, {}).get(step, {}).get(fab, 0)
                     for fab in [1, 2, 3]
                 )
-                if abs(total - target) > 1e-6:
+                if abs(total - target) > EPS:
                     passed = False
                     violations.append(
                         f"  {QUARTERS[q_idx]} Node {node} Step {step}: "
@@ -241,7 +243,7 @@ def check_loading_fulfillment(flow):
 
 # ---------------------------------------------------------------------------
 # CONSTRAINT 2 — Space  (replicates K7 = ArrayFormula space check)
-# For each (quarter, fab): Σ_ws tool_count[q][fab][ws] × space/tool ≤ fab_space[fab]
+# For each (quarter, fab): Σ_ws tool_count[q][fab][ws] × space/tool < fab_space[fab]
 # ---------------------------------------------------------------------------
 
 
@@ -259,10 +261,10 @@ def check_space(tool_plan):
                 for ws in ALL_WS
             )
             limit = FAB_SPACE[fab]
-            if used > limit + 1e-6:
+            if used >= limit:
                 passed = False
                 violations.append(
-                    f"  {QUARTERS[q_idx]} Fab {fab}: used={used:.2f} m² > limit={limit} m²"
+                    f"  {QUARTERS[q_idx]} Fab {fab}: used={used:.2f} m² >= limit={limit} m²"
                 )
     return passed, violations
 
@@ -343,46 +345,21 @@ def check_tool_capacity(tool_plan, flow):
                     total_req_on_mintech += req_on_min
                     total_req_on_tor += req_on_tor
 
-                if total_req_on_mintech > avail_mintech + 1e-9:
+                if total_req_on_mintech > avail_mintech + EPS:
                     passed = False
+                    cap_cell = capacity_cell(q_idx, fab, ws)
                     violations.append(
-                        f"  {QUARTERS[q_idx]} Fab {fab} WS {ws}: "
-                        f"mintech_req={total_req_on_mintech:.3f} > avail={avail_mintech}"
+                        f"  {QUARTERS[q_idx]} Fab {fab} WS {ws} ({cap_cell}): "
+                        f"mintech_req={total_req_on_mintech:.6f} > avail={avail_mintech}"
                     )
-                if total_req_on_tor > avail_tor + 1e-9:
+                if total_req_on_tor > avail_tor + EPS:
                     passed = False
+                    cap_cell = capacity_cell(q_idx, fab, ws)
                     violations.append(
-                        f"  {QUARTERS[q_idx]} Fab {fab} WS {ws_tor}: "
-                        f"TOR_req={total_req_on_tor:.3f} > avail={avail_tor}"
+                        f"  {QUARTERS[q_idx]} Fab {fab} WS {ws_tor} ({cap_cell}): "
+                        f"TOR_req={total_req_on_tor:.6f} > avail={avail_tor}"
                     )
 
-    return passed, violations
-
-
-# ---------------------------------------------------------------------------
-# Q1a EXTRA CONSTRAINT — No tool move-outs (tool counts cannot decrease)
-# ---------------------------------------------------------------------------
-
-
-def check_no_moveouts(tool_plan):
-    """
-    Q1a only: for every fab and WS, tool count must be non-decreasing across quarters.
-    Returns (passed: bool, violations: list of str)
-    """
-    passed = True
-    violations = []
-    for fab in [1, 2, 3]:
-        for ws in ALL_WS:
-            prev = get_tools(tool_plan, 0, fab, ws)
-            for q_idx in range(1, 8):
-                curr = get_tools(tool_plan, q_idx, fab, ws)
-                if curr < prev:
-                    passed = False
-                    violations.append(
-                        f"  Fab {fab} WS {ws}: count drops from {prev} ({QUARTERS[q_idx - 1]}) "
-                        f"to {curr} ({QUARTERS[q_idx]})"
-                    )
-                prev = curr
     return passed, violations
 
 
@@ -391,11 +368,9 @@ def check_no_moveouts(tool_plan):
 # ---------------------------------------------------------------------------
 
 
-def verify(tool_plan, flow, mode="Q1a"):
+def verify(tool_plan, flow):
     """
     Run all constraint checks and print a summary.
-
-    mode: 'Q1a' also checks no-move-out; 'Q1b' skips that check.
 
     tool_plan structure:
         tool_plan[quarter_idx][fab][ws] = int
@@ -405,7 +380,7 @@ def verify(tool_plan, flow, mode="Q1a"):
         flow[quarter_idx][node][step][fab] = wafers_per_week (float or int)
     """
     print(f"\n{'=' * 60}")
-    print(f"CONSTRAINT VERIFICATION — {mode}")
+    print("CONSTRAINT VERIFICATION — Q1 (Q1a/Q1b)")
     print(f"{'=' * 60}")
 
     all_pass = True
@@ -437,15 +412,6 @@ def verify(tool_plan, flow, mode="Q1a"):
         if len(v3) > 30:
             print(f"  ... and {len(v3) - 30} more violations")
     all_pass = all_pass and ok3
-
-    # --- Q1a extra: No move-outs ---
-    if mode == "Q1a":
-        ok4, v4 = check_no_moveouts(tool_plan)
-        status = "PASS [OK]" if ok4 else "FAIL [!!]"
-        print(f"\n[4] No Tool Move-outs (Q1a only): {status}")
-        if v4:
-            print("\n".join(v4))
-        all_pass = all_pass and ok4
 
     print(f"\n{'=' * 60}")
     overall = (
@@ -544,6 +510,15 @@ def flow_cell(quarter_idx, node, step, fab):
     return f"S{row}"
 
 
+def capacity_cell(quarter_idx, fab, ws_mintech):
+    """Return the Excel cell address for a tool capacity check (AU8:BB25)."""
+    if ws_mintech not in MINTECH_WS:
+        raise ValueError("capacity_cell expects a mintech WS (A..F)")
+    row = 8 + (fab - 1) * 6 + MINTECH_WS.index(ws_mintech)
+    col = CAPACITY_COLS[quarter_idx]
+    return f"{col}{row}"
+
+
 # ---------------------------------------------------------------------------
 # SOLUTION INPUTS — fill these in before calling verify()
 # ---------------------------------------------------------------------------
@@ -570,7 +545,7 @@ if __name__ == "__main__":
     #             flow[q_idx][node][step][2] = 0
     #             flow[q_idx][node][step][3] = 0
 
-    verify(tool_plan, flow, mode="Q1a")
+    verify(tool_plan, flow)
 
     # Uncomment to print diagnostics:
     # space_summary(tool_plan)

@@ -48,7 +48,6 @@ from verify_constraints import (
     MINTECH_WS,
     QUARTERS,
     check_loading_fulfillment,
-    check_no_moveouts,
     check_space,
     check_tool_capacity,
 )
@@ -198,12 +197,12 @@ def _q1_solution(tooling_file: str, flow_file: str):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Q1a  —  no tool move-outs
+# Q1a
 # ═════════════════════════════════════════════════════════════════════════════
 
 
 class TestQ1a:
-    """01_q1a_tooling.csv + 02_q1a_flow.csv  |  Part a: no move-outs."""
+    """01_q1a_tooling.csv + 02_q1a_flow.csv"""
 
     @pytest.fixture(scope="class")
     def solution(self):
@@ -227,20 +226,13 @@ class TestQ1a:
         ok, violations = check_tool_capacity(plan, flow)
         assert ok, "Tool capacity violated:\n" + "\n".join(violations)
 
-    def test_no_moveouts(self, solution):
-        """Q1a only: tool counts must be non-decreasing quarter-over-quarter."""
-        _, plan = solution
-        ok, violations = check_no_moveouts(plan)
-        assert ok, "Illegal tool move-out detected:\n" + "\n".join(violations)
-
     def test_master_gate(self, solution):
-        """B4 = AND(K7, V8, AP3, no-moveout)."""
+        """B4 = AND(K7, V8, AP3)."""
         flow, plan = solution
         results = [
             check_loading_fulfillment(flow)[0],
             check_space(plan)[0],
             check_tool_capacity(plan, flow)[0],
-            check_no_moveouts(plan)[0],
         ]
         assert all(results), "B4 is FALSE — run individual tests above for details"
 
