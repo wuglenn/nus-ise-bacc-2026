@@ -14,11 +14,12 @@ import scipy.sparse as sp
 from scipy.optimize import Bounds, LinearConstraint, milp
 
 try:
-    from pyscipopt import SCIP_PARAMSETTING, Model, quicksum
+    from pyscipopt import SCIP_PARAMEMPHASIS, SCIP_PARAMSETTING, Model, quicksum
 except Exception:  # pragma: no cover - optional dependency
     Model = None
     quicksum = None
     SCIP_PARAMSETTING = None
+    SCIP_PARAMEMPHASIS = None
 from solver_utils import (
     FAB_SPACE,
     MINTECH_WS,
@@ -39,6 +40,258 @@ WEEKS_PER_Q = 13
 MOVEOUT_COST = 1_000_000
 
 
+def _enforce_step_sum(flow, q_idx: int, node: int, step: int) -> None:
+    """
+    Enforce Excel's row check (S(fab1)+S(fab2)+S(fab3)) == target exactly in float.
+
+    The Q1b sheet uses a simple left-to-right sum: (fab1 + fab2) + fab3.
+    We treat fab3 as the dependent variable and solve it as the residual.
+    """
+    target = float(TARGET_LOADING[node][q_idx])
+    a = float(flow[q_idx][node][step][1])
+    b = float(flow[q_idx][node][step][2])
+    c_existing = float(flow[q_idx][node][step][3])
+
+    # Fast path: already exact (and preserves any previous fine-tuning on fab3).
+    if (a + b) + c_existing == target:
+        return
+
+    t12 = a + b
+    c = target - t12
+
+    # Nudge by 1 ulp if rounding makes us miss exact equality.
+    total = t12 + c
+    if total != target:
+        direction = -math.inf if total > target else math.inf
+        for _ in range(8):
+            c = math.nextafter(c, direction)
+            if (t12 + c) == target:
+                break
+
+    if c < 0.0:
+        # Extremely rare: keep non-negative by shifting into fab2, then recompute.
+        b = target - a
+        t12 = a + b
+        c = target - t12
+        total = t12 + c
+        if total != target:
+            direction = -math.inf if total > target else math.inf
+            for _ in range(8):
+                c = math.nextafter(c, direction)
+                if (t12 + c) == target:
+                    break
+        flow[q_idx][node][step][2] = max(0.0, b)
+
+    flow[q_idx][node][step][3] = max(0.0, c)
+
+
+def _enforce_loading_fulfillment(flow, nodes_steps: dict[int, int]) -> None:
+    """Make every (q,node,step) sum exactly to TARGET_LOADING under float arithmetic."""
+    for q_idx in range(8):
+        for node, n_steps in nodes_steps.items():
+            for step in range(1, n_steps + 1):
+                _enforce_step_sum(flow, q_idx, node, step)
+
+
+def _capacity_usage(flow, tool_plan, ws_steps, q_idx: int, fab: int, ws: str):
+    """Return (used_mintech, used_tor, step_infos) under mintech-first rule."""
+    ws_tor = WS_PAIRS[ws]
+    avail_m = int(tool_plan[q_idx][fab][ws])
+    avail_t = int(tool_plan[q_idx][fab][ws_tor])
+
+    cumulative_req = 0.0
+    used_m = 0.0
+    used_t = 0.0
+    step_infos = []
+    for rank, node, step, rpt_m, util_m, rpt_t, util_t in ws_steps[ws]:
+        load = float(flow[q_idx][node][step][fab])
+        if load <= 0:
+            step_infos.append((rank, node, step, load, 0.0, 0.0, 0.0, 0.0))
+            continue
+        # Match the Excel formula order: load*rpt/10080/util
+        req_m = (load * rpt_m) / MINS_PER_WEEK / util_m
+        req_t = (load * rpt_t) / MINS_PER_WEEK / util_t
+        cumulative_req += req_m
+        overflow = max(0.0, cumulative_req - avail_m)
+
+        if overflow == 0.0:
+            req_on_m = req_m
+            req_on_t = 0.0
+        elif overflow >= req_m:
+            req_on_m = 0.0
+            req_on_t = req_t
+        else:
+            req_on_m = req_m - overflow
+            req_on_t = req_t * overflow / req_m if req_m > 0 else 0.0
+
+        used_m += req_on_m
+        used_t += req_on_t
+        step_infos.append((rank, node, step, load, req_m, req_t, req_on_m, req_on_t))
+
+    return avail_m, avail_t, used_m, used_t, step_infos
+
+
+def _fix_capacity_violations(flow, tool_plan, ws_steps, fabs) -> None:
+    """
+    Repair strict Excel capacity checks (used <= available) after MILP solve.
+
+    The MILP (and CSV formatting) can leave solutions *extremely* tight, where
+    floating error makes a requirement evaluate as, e.g., 3.000000000000002 > 3.
+
+    We fix this by shifting a very small amount of load between fabs within a
+    single (q,node,step) (so totals stay the same), then re-enforcing exact
+    per-step loading fulfillment each time.
+    """
+    max_iters = 200_000
+    for _ in range(max_iters):
+        violations = []
+        details = {}
+        for q_idx in range(8):
+            for fab in fabs:
+                for ws in MINTECH_WS:
+                    avail_m, avail_t, used_m, used_t, step_infos = _capacity_usage(
+                        flow, tool_plan, ws_steps, q_idx, fab, ws
+                    )
+                    details[(q_idx, fab, ws)] = (avail_m, avail_t, used_m, used_t, step_infos)
+                    if used_m > avail_m:
+                        violations.append((used_m - avail_m, q_idx, fab, ws, "mintech"))
+                    if used_t > avail_t:
+                        violations.append((used_t - avail_t, q_idx, fab, ws, "tor"))
+
+        if not violations:
+            return
+
+        # Fix the worst violation first.
+        violations.sort(reverse=True, key=lambda x: x[0])
+        diff, q_idx, src_fab, ws, kind = violations[0]
+        avail_m, avail_t, used_m, used_t, step_infos = details[(q_idx, src_fab, ws)]
+
+        base_sum = 0.0
+        base_max = 0.0
+        for f in fabs:
+            a_m, a_t, u_m, u_t, _ = details[(q_idx, f, ws)]
+            v_m = max(0.0, u_m - a_m)
+            v_t = max(0.0, u_t - a_t)
+            base_sum += v_m + v_t
+            base_max = max(base_max, v_m, v_t)
+
+        if kind == "tor":
+            candidates = [s for s in step_infos if s[3] > 0.0 and s[7] > 0.0]
+        else:
+            candidates = [s for s in step_infos if s[3] > 0.0 and s[6] > 0.0]
+            if not candidates:
+                candidates = [s for s in step_infos if s[3] > 0.0]
+
+        if not candidates:
+            raise RuntimeError(
+                f"Cannot fix capacity violation: no movable load for {QUARTERS[q_idx]} fab{src_fab} ws{ws}"
+            )
+
+        # Prefer moving lowest-priority work (highest rank), then biggest contribution, then load.
+        contrib_idx = 7 if kind == "tor" else 6
+        candidates.sort(key=lambda s: (s[0], s[contrib_idx], s[3]), reverse=True)
+
+        moved = False
+        for rank, node, step, load, req_m, req_t, req_on_m, req_on_t in candidates:
+            coeff = (req_on_t / load) if kind == "tor" else (req_on_m / load)
+            if coeff <= 0.0:
+                continue
+
+            # Try destinations in order of slack for this WS.
+            dst_fabs = [f for f in fabs if f != src_fab]
+            dst_fabs.sort(
+                key=lambda f: details[(q_idx, f, ws)][1] - details[(q_idx, f, ws)][3],
+                reverse=True,
+            )
+
+            for dst_fab in dst_fabs:
+                old_a1 = float(flow[q_idx][node][step][1])
+                old_a2 = float(flow[q_idx][node][step][2])
+
+                # Delta needed (in wafers/week) to clear this violation on the chosen step,
+                # using the step's current effective tool/wafer coefficient.
+                delta0 = (diff * 1.1) / coeff
+                if delta0 <= 0.0:
+                    continue
+
+                # Line-search down if needed.
+                delta = delta0
+                for _ls in range(30):
+                    a1 = old_a1
+                    a2 = old_a2
+
+                    def apply_move(src: int, dst: int, d: float) -> bool:
+                        nonlocal a1, a2
+                        if d <= 0.0:
+                            return False
+                        # Move between fabs by adjusting fab1/fab2; fab3 is residual.
+                        if src == 1:
+                            if a1 - d < 0.0:
+                                return False
+                            a1 -= d
+                            if dst == 2:
+                                a2 += d
+                        elif src == 2:
+                            if a2 - d < 0.0:
+                                return False
+                            a2 -= d
+                            if dst == 1:
+                                a1 += d
+                        else:  # src == 3
+                            if dst == 1:
+                                a1 += d
+                            elif dst == 2:
+                                a2 += d
+                            else:
+                                return False
+                        return True
+
+                    if not apply_move(src_fab, dst_fab, delta):
+                        delta *= 0.5
+                        continue
+
+                    flow[q_idx][node][step][1] = a1
+                    flow[q_idx][node][step][2] = a2
+                    _enforce_step_sum(flow, q_idx, node, step)
+
+                    new_sum = 0.0
+                    new_max = 0.0
+                    for fab_chk in fabs:
+                        a_m, a_t, u_m, u_t, _ = _capacity_usage(
+                            flow, tool_plan, ws_steps, q_idx, fab_chk, ws
+                        )
+                        v_m = max(0.0, u_m - a_m)
+                        v_t = max(0.0, u_t - a_t)
+                        new_sum += v_m + v_t
+                        new_max = max(new_max, v_m, v_t)
+
+                    if (new_max, new_sum) < (base_max, base_sum):
+                        moved = True
+                        break
+
+                    # Revert and try smaller.
+                    flow[q_idx][node][step][1] = old_a1
+                    flow[q_idx][node][step][2] = old_a2
+                    _enforce_step_sum(flow, q_idx, node, step)
+                    delta *= 0.5
+
+                if moved:
+                    break
+
+            if moved:
+                break
+
+        if not moved:
+            raise RuntimeError(
+                f"Unable to repair strict capacity for {QUARTERS[q_idx]} fab{src_fab} ws{ws} ({kind}). "
+                "Try increasing Q1B_TIME_LIMIT or buying a small amount of extra tooling."
+            )
+
+    raise RuntimeError(
+        f"Capacity repair hit max_iters={max_iters} without clearing all violations."
+    )
+
+
 def _time_limit_seconds() -> int | None:
     val = os.getenv("Q1B_TIME_LIMIT")
     if val is None:
@@ -51,7 +304,8 @@ def _time_limit_seconds() -> int | None:
 TIME_LIMIT_SECONDS = _time_limit_seconds()
 
 
-def _ws_steps():
+def _ws_steps_model():
+    """Steps grouped by mintech WS, with precomputed linear coefficients for the MILP."""
     ws_steps = {ws: [] for ws in MINTECH_WS}
     for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
         a_m = rpt_m / (MINS_PER_WEEK * WS_SPECS[ws_m]["util"])
@@ -59,14 +313,30 @@ def _ws_steps():
         r = a_t / a_m if a_m > 0 else 0.0
         ws_steps[ws_m].append((rank, node, step, a_m, a_t, r))
     for ws in MINTECH_WS:
-        ws_steps[ws].sort(key=lambda x: (x[0], x[1], x[2]))
+        # Match Excel/Python verifier tie-breaking: sort by rank only (stable for ties).
+        ws_steps[ws].sort(key=lambda x: x[0])
     return ws_steps
 
 
-def _solve_with_highs(c, constraints, bounds, integrality):
-    options = {"disp": True, "presolve": True}
-    if TIME_LIMIT_SECONDS is not None:
-        options["time_limit"] = TIME_LIMIT_SECONDS
+def _ws_steps_capacity():
+    """Steps grouped by mintech WS, with raw RPT/util for Excel-accurate float math."""
+    ws_steps = {ws: [] for ws in MINTECH_WS}
+    for node, step, ws_m, rpt_m, ws_t, rpt_t, rank in NODE_STEPS:
+        util_m = WS_SPECS[ws_m]["util"]
+        util_t = WS_SPECS[ws_t]["util"]
+        ws_steps[ws_m].append((rank, node, step, rpt_m, util_m, rpt_t, util_t))
+    for ws in MINTECH_WS:
+        ws_steps[ws].sort(key=lambda x: x[0])
+    return ws_steps
+
+
+def _solve_with_highs(
+    c, constraints, bounds, integrality, *, time_limit_seconds: int | None = None, disp: bool = True
+):
+    options = {"disp": disp, "presolve": True}
+    tl = TIME_LIMIT_SECONDS if time_limit_seconds is None else time_limit_seconds
+    if tl is not None:
+        options["time_limit"] = int(tl)
     res = milp(
         c,
         constraints=constraints,
@@ -81,12 +351,15 @@ def _solve_with_highs(c, constraints, bounds, integrality):
     return res.x
 
 
-def _solve_with_scip(c, A, lbs, ubs, bounds, integrality):
+def _solve_with_scip(c, A, lbs, ubs, bounds, integrality, warm_start=None):
     if Model is None:
         raise RuntimeError("PySCIPOpt is not installed.")
     model = Model("q1b_global")
     model.setMinimize()
+    if SCIP_PARAMEMPHASIS is not None:
+        model.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
     model.setPresolve(SCIP_PARAMSETTING.AGGRESSIVE)
+    model.setHeuristics(SCIP_PARAMSETTING.AGGRESSIVE)
     if TIME_LIMIT_SECONDS is not None:
         model.setRealParam("limits/time", float(TIME_LIMIT_SECONDS))
 
@@ -107,6 +380,14 @@ def _solve_with_scip(c, A, lbs, ubs, bounds, integrality):
         vars_list.append(v)
 
     model.setObjective(quicksum(float(c[i]) * vars_list[i] for i in range(n_vars)))
+
+    if warm_start is not None:
+        sol = model.createSol()
+        for i, v in enumerate(vars_list):
+            model.setSolVal(sol, v, float(warm_start[i]))
+        stored = model.addSol(sol, free=True)
+        if not stored:
+            print("[warn] SCIP rejected warm start solution")
 
     A_csr = A.tocsr()
     for i in range(A_csr.shape[0]):
@@ -148,7 +429,8 @@ def _solve_with_scip(c, A, lbs, ubs, bounds, integrality):
 def build_flow_and_tools_global():
     nodes_steps = {1: 11, 2: 15, 3: 17}
     fabs = [1, 2, 3]
-    ws_steps = _ws_steps()
+    ws_steps_model = _ws_steps_model()
+    ws_steps_cap = _ws_steps_capacity()
     mintech_tools = base_mintech_tools()
 
     # Variable indices
@@ -185,7 +467,7 @@ def build_flow_and_tools_global():
     for q_idx in range(8):
         for fab in fabs:
             for ws in MINTECH_WS:
-                for j in range(len(ws_steps[ws])):
+                for j in range(len(ws_steps_model[ws])):
                     idx_m[(q_idx, fab, ws, j)] = var_idx
                     var_idx += 1
 
@@ -233,7 +515,7 @@ def build_flow_and_tools_global():
 
     # mintech usage and binaries
     for (q_idx, fab, ws, j), idx in idx_m.items():
-        rank, node, step, a_m, a_t, r = ws_steps[ws][j]
+        rank, node, step, a_m, a_t, r = ws_steps_model[ws][j]
         ub[idx] = a_m * TARGET_LOADING[node][q_idx]
 
     # tool counts
@@ -244,13 +526,13 @@ def build_flow_and_tools_global():
         else:
             # max mintech tools if all load assigned to one fab
             max_m = 0.0
-            for rank, node, step, a_m, a_t, r in ws_steps[ws]:
+            for rank, node, step, a_m, a_t, r in ws_steps_model[ws]:
                 max_m += a_m * TARGET_LOADING[node][q_idx]
             ub[idx] = math.ceil(max_m)
         integrality[idx] = 1
     for (q_idx, fab, ws), idx in idx_T.items():
         max_t = 0.0
-        for rank, node, step, a_m, a_t, r in ws_steps[ws]:
+        for rank, node, step, a_m, a_t, r in ws_steps_model[ws]:
             max_t += a_t * TARGET_LOADING[node][q_idx]
         ub[idx] = math.ceil(max_t)
         integrality[idx] = 1
@@ -299,7 +581,7 @@ def build_flow_and_tools_global():
     for q_idx in range(8):
         for fab in fabs:
             for ws in MINTECH_WS:
-                steps_list = ws_steps[ws]
+                steps_list = ws_steps_model[ws]
                 S = len(steps_list)
 
                 for j, (rank, node, step, a_m, a_t, r) in enumerate(steps_list):
@@ -385,9 +667,22 @@ def build_flow_and_tools_global():
         for ws in MINTECH_WS:
             c[idx_incT0[(fab, ws)]] = WS_SPECS[WS_PAIRS[ws]]["capex"]
 
-    solver = os.getenv("Q1B_SOLVER", "highs").lower()
+    solver_env = os.getenv("Q1B_SOLVER")
+    solver = (
+        solver_env.lower()
+        if solver_env is not None
+        else ("scip" if Model is not None else "highs")
+    )
     if solver == "scip":
-        x = _solve_with_scip(c, A, lb_arr, ub_arr, bounds, integrality)
+        # Prefer SCIP. Optional warm start (HiGHS) can be enabled via env var if SCIP
+        # struggles to find an incumbent within the time limit.
+        warm = os.getenv("Q1B_WARM_START", "0").strip().lower() in {"1", "true", "yes", "y"}
+        x0 = None
+        if warm:
+            x0 = _solve_with_highs(
+                c, constraints, bounds, integrality, time_limit_seconds=60, disp=False
+            )
+        x = _solve_with_scip(c, A, lb_arr, ub_arr, bounds, integrality, warm_start=x0)
     else:
         x = _solve_with_highs(c, constraints, bounds, integrality)
 
@@ -407,6 +702,13 @@ def build_flow_and_tools_global():
                 tool_plan[q_idx][fab][WS_PAIRS[ws]] = int(
                     round(x[idx_T[(q_idx, fab, ws)]])
                 )
+
+    # Solver output is continuous; the Excel answer sheet uses exact comparisons.
+    # Enforce exact per-step loading fulfillment first, then nudge away any strict-capacity
+    # floating edge cases, and finally re-enforce loading fulfillment.
+    _enforce_loading_fulfillment(flow, nodes_steps)
+    _fix_capacity_violations(flow, tool_plan, ws_steps_cap, fabs)
+    _enforce_loading_fulfillment(flow, nodes_steps)
 
     return flow, tool_plan
 

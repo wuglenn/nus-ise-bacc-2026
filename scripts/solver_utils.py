@@ -28,7 +28,8 @@ Step = Tuple[int, int, str, float, str, float, int]
 
 
 def step_tool_req(load_wpw: float, rpt_min: float, util: float) -> float:
-    return (load_wpw * rpt_min) / (MINS_PER_WEEK * util)
+    # Match the Excel formula order: load*rpt/10080/util
+    return (load_wpw * rpt_min) / MINS_PER_WEEK / util
 
 
 def steps_by_ws() -> Dict[str, List[Step]]:
@@ -150,7 +151,9 @@ def write_flow_csv(
                             .get(step, {})
                             .get(fab, 0.0)
                         )
-                        w.writerow([q, node, step, fab, f"{val:.12f}"])
+                        # Write enough precision to round-trip floats reliably.
+                        # (Avoid fixed-decimal rounding that can break Excel's exact equality checks.)
+                        w.writerow([q, node, step, fab, format(float(val), ".17g")])
 
 
 def write_tooling_csv(

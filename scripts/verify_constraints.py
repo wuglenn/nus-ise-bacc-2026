@@ -184,7 +184,6 @@ TOR_WS = ["A+", "B+", "C+", "D+", "E+", "F+"]
 ALL_WS = MINTECH_WS + TOR_WS
 WS_PAIRS = {m: t for m, t in zip(MINTECH_WS, TOR_WS)}  # e.g. 'A' -> 'A+'
 CAPACITY_COLS = ["AU", "AV", "AW", "AX", "AY", "AZ", "BA", "BB"]
-EPS = 1e-9
 
 NODE_STEPS_IDX = {}  # (node, step) -> row tuple
 for row in NODE_STEPS:
@@ -232,7 +231,7 @@ def check_loading_fulfillment(flow):
                     flow.get(q_idx, {}).get(node, {}).get(step, {}).get(fab, 0)
                     for fab in [1, 2, 3]
                 )
-                if abs(total - target) > EPS:
+                if total != target:
                     passed = False
                     violations.append(
                         f"  {QUARTERS[q_idx]} Node {node} Step {step}: "
@@ -284,7 +283,9 @@ def check_space(tool_plan):
 
 def tool_req(loading, rpt, util):
     """Tool requirement (fractional) for given loading/RPT/utilization."""
-    return (loading * rpt) / (MINS_PER_WEEK * util)
+    # Match the answer sheet's formula order (e.g., `=S*RPT/10080/UTIL`),
+    # which is not always bit-identical to dividing by (10080*UTIL) in one go.
+    return (loading * rpt) / MINS_PER_WEEK / util
 
 
 def check_tool_capacity(tool_plan, flow):
@@ -345,14 +346,14 @@ def check_tool_capacity(tool_plan, flow):
                     total_req_on_mintech += req_on_min
                     total_req_on_tor += req_on_tor
 
-                if total_req_on_mintech > avail_mintech + EPS:
+                if total_req_on_mintech > avail_mintech:
                     passed = False
                     cap_cell = capacity_cell(q_idx, fab, ws)
                     violations.append(
                         f"  {QUARTERS[q_idx]} Fab {fab} WS {ws} ({cap_cell}): "
                         f"mintech_req={total_req_on_mintech:.6f} > avail={avail_mintech}"
                     )
-                if total_req_on_tor > avail_tor + EPS:
+                if total_req_on_tor > avail_tor:
                     passed = False
                     cap_cell = capacity_cell(q_idx, fab, ws)
                     violations.append(
